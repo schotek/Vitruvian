@@ -276,8 +276,12 @@ TBarApp::InitSettings()
 	// applications
 	settings.trackerAlwaysFirst = fDefaultSettings.trackerAlwaysFirst = true;
 	settings.sortRunningApps = fDefaultSettings.sortRunningApps = false;
-	settings.superExpando = fDefaultSettings.superExpando = false;
-	settings.expandNewTeams = fDefaultSettings.expandNewTeams = false;
+	// VitruvianOS default: expand applications in place, so each window
+	// gets its own row under its application. Hosted sessions (the Vitrine
+	// compositor puts every Wayland/X11 client in one team) are otherwise
+	// a single opaque entry, and the same view helps any multi-window app.
+	settings.superExpando = fDefaultSettings.superExpando = true;
+	settings.expandNewTeams = fDefaultSettings.expandNewTeams = true;
 	settings.hideLabels = fDefaultSettings.hideLabels = false;
 	settings.iconSize = fDefaultSettings.iconSize = kMinimumIconSize;
 	// recent items

@@ -1,0 +1,5 @@
+# System-wide GTK 2 defaults for X11 apps under Xvitruvian.
+# /usr/share/themes/BeOS/gtk-2.0 comes from the vendored theme in
+# data/themes/BeOS.
+gtk-theme-name = "BeOS"
+gtk-font-name = "Sans 10"

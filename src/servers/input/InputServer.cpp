@@ -1996,10 +1996,63 @@ InputServer::_DispatchEvent(BMessage* event)
 			break;
 	}
 
+	// STATE-TRANSITION events must never be dropped. The zero-timeout send
+	// below maps to write_port_etc(..., B_RELATIVE_TIMEOUT, 0)
+	// (BMessage::_SendMessage, src/kits/app/Message.cpp): when the
+	// app_server side stalls draining the 200-slot event port (its
+	// EventDispatcher filters take Desktop window locks, which heavy
+	// drawing — e.g. an X11 client redraw storm — can hold for a while,
+	// while B_MOUSE_MOVED traffic keeps filling the port), the write
+	// returns B_WOULD_BLOCK and the event was silently discarded: a lost
+	// B_KEY_UP then leaves the key logically held forever (observed as
+	// endless key autorepeat in nested X clients; the matching release
+	// existed in the kernel and in our shadow state, and vanished exactly
+	// here). Give transitions a bounded blocking window instead; pure
+	// motion events stay fire-and-forget — they are high-rate and the next
+	// one supersedes the lost one anyway.
+	bigtime_t timeout = 0;
+	switch (event->what) {
+		case B_KEY_DOWN:
+		case B_KEY_UP:
+		case B_UNMAPPED_KEY_DOWN:
+		case B_UNMAPPED_KEY_UP:
+		case B_MODIFIERS_CHANGED:
+		case B_INPUT_METHOD_EVENT:
+		case B_MOUSE_DOWN:
+		case B_MOUSE_UP:
+			timeout = 1000000;
+			break;
+		default:
+			break;
+	}
+
 	BMessenger reply;
 	BMessage::Private messagePrivate(event);
-	return messagePrivate.SendMessage(fAppServerPort, fAppServerTeam, 0, 0,
-		false, reply);
+	status_t status = messagePrivate.SendMessage(fAppServerPort,
+		fAppServerTeam, 0, timeout, false, reply);
+	if (status != B_OK && timeout != 0) {
+		PRINTERR(("InputServer: DROPPED 0x%" B_PRIx32 " event after %"
+			B_PRIdBIGTIME "us: %s\n", event->what, timeout,
+			strerror(status)));
+	}
+
+	/* INPUT_SERVER_DEBUG=1 (or marker file /tmp/input_server_debug —
+	 * needed because app_server relaunches a dead input_server via BRoster
+	 * with its own environment): trace every key transition handed to the
+	 * app_server event port, with the send status — for pinpointing where
+	 * a lost KeyRelease vanishes (kernel → input_server → app_server →
+	 * client window). stderr is unbuffered, unlike printf's stdout. */
+	static int debugKeys = -1;
+	if (debugKeys < 0)
+		debugKeys = getenv("INPUT_SERVER_DEBUG") != NULL
+			|| access("/tmp/input_server_debug", F_OK) == 0;
+	if (debugKeys != 0 && timeout != 0) {
+		int32 key = -1;
+		event->FindInt32("key", &key);
+		fprintf(stderr, "is: sent 0x%" B_PRIx32 " key=%" B_PRId32
+			" status=%s\n", event->what, key, strerror(status));
+	}
+	return status;
 }
 
 

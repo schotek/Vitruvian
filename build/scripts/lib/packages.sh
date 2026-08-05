@@ -11,6 +11,9 @@ get_base_packages() {
                 " procps vim-tiny libbinutils openssh-server locales xdg-user-dirs ca-certificates iputils-ping xfsprogs" \
                 " fortune-mod ncurses-bin rsync" \
                 " pipewire-audio pipewire-bin wireplumber gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav" \
+                " libwlroots-0.18 xwayland foot wayland-utils weston" \
+                " gsettings-desktop-schemas xkb-data x11-xkb-utils xserver-common xfonts-base xterm x11-apps gtk-3-examples" \
+                " fonts-dejavu-core librsvg2-common shared-mime-info adwaita-icon-theme libpam-systemd dbus-user-session" \
                 " grub-common grub2-common grub-efi-amd64-bin grub-efi-ia32-bin grub-pc-bin"
             ;;
         arm64)
@@ -63,7 +66,8 @@ get_dev_packages() {
                 " libgcrypt20-dev" \
                 " libjpeg-dev libpng-dev libtiff-dev libwebp-dev libicns-dev" \
                 " libpipewire-0.3-dev libspa-0.2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev" \
-                " libglu1-mesa-dev libnm-dev libbluetooth-dev"
+                " libglu1-mesa-dev libnm-dev libbluetooth-dev" \
+                " libwlroots-0.18-dev libwayland-dev wayland-protocols libpixman-1-dev"
             ;;
         arm64)
             printf '%s' \

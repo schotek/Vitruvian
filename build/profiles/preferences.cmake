@@ -16,6 +16,7 @@ set(SYSTEM_PREFERENCES_TARGETS
 	Sounds
 	Tracker_prefs
 	User
+	Vitrine_prefs
 )
 
 # Installed binary names (OUTPUT_NAME where it differs) — used for symlinks and staging
@@ -36,6 +37,7 @@ set(SYSTEM_PREFERENCES
 	Sounds
 	Tracker
 	User
+	VitrineSettings
 )
 
 ImageInclude("/system/preferences" ${SYSTEM_PREFERENCES_TARGETS})

@@ -245,6 +245,19 @@ DeclareDependency(
 	INCLUDES   "${HEADERS_PATH_BASE}/gstreamer-1.0/;${HEADERS_PATH_BASE}/glib-2.0/;${VITRUVIAN_CHROOT_PATH}/usr/lib/${VITRUVIAN_MULTIARCH_TRIPLE}/glib-2.0/include/"
 )
 
+# Vitrine (nested Wayland compositor, src/servers/wayland/vitrine) runtime
+# libraries. Deliberately no PACKAGES: install-deps.sh apt-installs that list
+# on the (Ubuntu) HOST, where the Debian-versioned libwlroots-0.18-dev does
+# not exist — the sysroot gets its -dev packages from packages.sh instead.
+# Guarded so a build without the compositor doesn't make the VOS .deb depend
+# on xwayland/wlroots (RUNTIMES feed CPACK_DEBIAN_PACKAGE_DEPENDS).
+if(VITRUVIAN_ENABLE_WAYLAND)
+DeclareDependency(
+	VITRINE
+	RUNTIMES	"libwlroots-0.18;libwayland-server0;libpixman-1-0;libxkbcommon0;xwayland;xkb-data"
+)
+endif()
+
 # Dependencies for Debug builds
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

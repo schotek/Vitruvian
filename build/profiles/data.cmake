@@ -94,6 +94,20 @@ ImageIncludeFile("data/etc/profile" "/system/settings/etc")
 ImageIncludeFile("data/etc/inputrc" "/system/settings/etc")
 ImageIncludeDir("data/etc/profile.d" "/system/settings/etc/")
 
+# BeOS R5 look for GTK 2/3/4 apps running under Xvitruvian: the vendored
+# B00merang theme (data/themes/BeOS, see its PROVENANCE file) plus the
+# system-wide GTK config files selecting it. GTK reads /etc/gtk-*/settings.ini
+# (its compiled-in sysconfdir) before any XDG override, so per-user settings
+# still take precedence.
+ImageIncludeDir("data/themes/BeOS" "/usr/share/themes/")
+ImageIncludeDir("data/etc/gtk-2.0" "/etc/")
+# GTK-on-Wayland reads GSettings once gsettings-desktop-schemas exists; the
+# libglib2.0 dpkg file trigger recompiles the schema cache on install.
+ImageIncludeFile("data/glib-2.0/90_vitruvian.gschema.override"
+	"/usr/share/glib-2.0/schemas")
+ImageIncludeDir("data/etc/gtk-3.0" "/etc/")
+ImageIncludeDir("data/etc/gtk-4.0" "/etc/")
+
 # Skel: copied into each user's ~/config by useradd -m.
 ImageIncludeFile("data/config/boot/UserBootscript" "/etc/skel/config/settings/boot")
 ImageIncludeFile("data/config/boot/UserSetupEnvironment.sample" "/etc/skel/config/settings/boot")

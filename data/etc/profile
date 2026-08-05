@@ -124,6 +124,15 @@ for dir in `findpaths -Re B_FIND_PATH_DATA_DIRECTORY profile.d 2> /dev/null`; do
 done
 unset dir
 
+if [ -d /system/settings/etc/profile.d ]; then
+  for i in /system/settings/etc/profile.d/*.sh; do
+    if [ -r $i ]; then
+      . $i
+    fi
+  done
+  unset i
+fi
+
 if [ -d /etc/profile.d ]; then
   for i in /etc/profile.d/*.sh; do
     if [ -r $i ]; then

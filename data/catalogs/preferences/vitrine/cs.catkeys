@@ -1,0 +1,12 @@
+1	czech	x-vnd.Vitruvian-VitrinePrefs	0
+VitrineSettings	System name		Nastavení Vitrine
+Vitrine — Wayland and X11 application support	Vitrine window		Vitrine — podpora aplikací Wayland a X11
+Hosts Wayland and X11 applications as native windows on the desktop.	Vitrine window		Zobrazuje aplikace Wayland a X11 jako nativní okna na ploše.
+Start Vitrine when logging in	Vitrine window		Spouštět Vitrine při přihlášení
+Currently running.	Vitrine window		Právě běží.
+Currently running; it will not start at the next login.	Vitrine window		Právě běží; při příštím přihlášení se nespustí.
+Not running; it will start at the next login.	Vitrine window		Neběží; spustí se při příštím přihlášení.
+Not running.	Vitrine window		Neběží.
+Vitrine is not installed in this system image.	Vitrine window		Vitrine není v tomto obrazu systému nainstalována.
+About…	Vitrine window		O aplikaci…
+Settings for Vitrine, the nested Wayland compositor that hosts Wayland and X11 applications as native windows on the VitruvianOS desktop.	Vitrine application		Nastavení kompozitoru Vitrine, který zobrazuje aplikace Wayland a X11 jako nativní okna na ploše VitruvianOS.

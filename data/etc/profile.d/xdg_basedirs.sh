@@ -10,13 +10,17 @@ export XDG_CONFIG_HOME="`finddir B_USER_SETTINGS_DIRECTORY`"
 # defaults to ~/.local/share
 export XDG_DATA_HOME="`finddir B_USER_NONPACKAGED_DATA_DIRECTORY`"
 
-# defaults to /etc/xdg
-export XDG_CONFIG_DIRS="`finddir B_SYSTEM_SETTINGS_DIRECTORY`"
+# defaults to /etc/xdg — PREPEND the Haiku dir, keep the spec default:
+# replacing the list would hide /etc/xdg configuration (and GTK settings)
+# from every X11/GTK app launched from a shell.
+export XDG_CONFIG_DIRS="`finddir B_SYSTEM_SETTINGS_DIRECTORY`:/etc/xdg"
 # XXX: Should we add B_USER_ETC_DIRECTORY?
 
-# default to /usr/local/share/:/usr/share/
+# default to /usr/local/share/:/usr/share/ — same rule: prepend, don't
+# replace, or Debian-installed themes/icons/mime under /usr/share become
+# invisible to X11 apps.
 export XDG_DATA_DIRS="`finddir B_SYSTEM_NONPACKAGED_DATA_DIRECTORY`:\
-`finddir B_SYSTEM_DATA_DIRECTORY`"
+`finddir B_SYSTEM_DATA_DIRECTORY`:/usr/local/share:/usr/share"
 
 # defaults to ~/.cache
 export XDG_CACHE_HOME="`finddir B_USER_CACHE_DIRECTORY`"
