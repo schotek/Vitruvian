@@ -42,7 +42,43 @@ sudo apt install -y libbfd-dev
 cd "$GEN"
 
 echo "==> (2/4) Creating chroot (debootstrap - downloads ~hundreds of MB, a few minutes)..."
-../configure --chroot-build --buildtools=../buildtools
+# Distro packages land in the image rootfs ONLY when the chroot is
+# (re)created (chroot_create in build/scripts/lib/chroot.sh) — an existing
+# image_tree/chroot silently keeps its old package set. The check must run
+# BEFORE ../configure: cmake resolves libraries from the chroot sysroot
+# (pkg_check_modules), so against a stale chroot configure hard-fails and a
+# later regeneration step would never be reached — a permanent wedge.
+_pkg_stamp="$GEN/.packages.stamp"
+_pkg_hash="$(sha256sum "$REPO/build/scripts/lib/packages.sh" | cut -d' ' -f1)"
+if [ -d "$GEN/image_tree/chroot" ] \
+		&& [ "$(cat "$_pkg_stamp" 2>/dev/null)" != "$_pkg_hash" ]; then
+	echo "==> Package lists changed since the chroot was created:"
+	echo "    regenerating it (re-downloads packages, takes a few minutes)."
+	(
+		set +u  # the sourced build libs are not `set -u`-clean
+		. "$REPO/build/scripts/lib/common.sh"
+		. "$REPO/build/scripts/lib/packages.sh"
+		. "$REPO/build/scripts/lib/boards.sh"
+		. "$REPO/build/scripts/lib/chroot.sh"
+		. "$REPO/build/scripts/lib/qemu.sh"
+		chroot_regenerate "$GEN" "$ARCH"
+	)
+	# Stamp immediately after the regeneration: a compile failure later in
+	# this run must not re-trigger a full debootstrap on the next attempt.
+	printf '%s\n' "$_pkg_hash" > "$_pkg_stamp"
+fi
+
+# --enable-wayland: build the Vitrine nested Wayland compositor (amd64 only
+# so far). Without it a fresh generated dir would silently configure with the
+# compositor off and the ISO smoke tests would test the wrong image.
+_configure_extra=""
+if [ "$ARCH" = "amd64" ]; then
+	_configure_extra="--enable-wayland"
+fi
+../configure --chroot-build --buildtools=../buildtools $_configure_extra
+# A fresh tree had no chroot before configure — it was just created from the
+# current package lists, so record them (no-op when already stamped above).
+printf '%s\n' "$_pkg_hash" > "$_pkg_stamp"
 
 echo "==> (3/4) Baking the ISO image (bake build --image-type=iso)..."
 ../bake build --image-type=iso

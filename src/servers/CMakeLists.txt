@@ -5,3 +5,7 @@ add_subdirectory(mount)
 add_subdirectory(registrar)
 add_subdirectory(notification)
 add_subdirectory(keystore)
+
+if(VITRUVIAN_ENABLE_WAYLAND)
+	add_subdirectory(wayland/vitrine)
+endif()

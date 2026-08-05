@@ -33,7 +33,7 @@ GEN="$REPO/generated.$ARCH"
 
 # --- Curated host packages (toolchain / image / boot) ------------------------
 # Not covered by build_deps.txt, which lists only library -dev deps.
-BASE_TOOLCHAIN="build-essential cmake ninja-build pkg-config git flex bison gettext dpkg-dev rsync"
+BASE_TOOLCHAIN="build-essential cmake ninja-build pkg-config git flex bison gettext dpkg-dev rsync meson libwayland-bin"
 # Image assembly: debootstrap (chroot), squashfs, ISO (xorriso+grub+mtools),
 # filesystems (vfat/ext4/xfs), partitioning. libbfd-dev is what build-iso.sh
 # would otherwise install on its own.

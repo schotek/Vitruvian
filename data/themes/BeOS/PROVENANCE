@@ -1,0 +1,13 @@
+Vendored third-party GTK theme — do not edit in place.
+
+Upstream:  https://github.com/B00merang-Project/BeOS
+Commit:    a3e1ad0d7a913f16377386a3ba942b4f8d4e2420 (master, fetched 2026-08-02)
+License:   GPL-3.0 (see LICENSE)
+
+A BeOS R5 look for GTK 2 / GTK 3 / GTK 4 applications running under the
+nested Xvitruvian X server (src/servers/xserver). Installed into the image
+as /usr/share/themes/BeOS and selected globally via /etc/gtk-2.0/gtkrc and
+/etc/gtk-{3,4}.0/settings.ini (see build/profiles/data.cmake).
+
+To update: replace this directory with a fresh upstream checkout and record
+the new commit hash here.

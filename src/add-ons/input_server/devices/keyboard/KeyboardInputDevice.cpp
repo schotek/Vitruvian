@@ -477,8 +477,28 @@ KeyboardDevice::_ControlThread()
 			fUpdateSettings = false;
 		}
 
+		/* Only sleep in epoll when libevdev holds no buffered events. Its
+		 * internal read() consumes whole bursts from the fd, returning them
+		 * one libevdev_next_event() at a time — while epoll watches the
+		 * now-EMPTY fd. Sleeping here with events still buffered strands
+		 * them until the next physical input makes the fd readable again: a
+		 * stranded KEY_UP leaves the key logically held for minutes
+		 * (observed as endless autorepeat in nested X clients — the classic
+		 * "htoppppp..." bug; verified deterministically by writing
+		 * down+SYN+up+SYN into the evdev node in a single write()). This is
+		 * the documented libevdev usage contract: drain until -EAGAIN
+		 * before polling. Every `continue` below re-enters through this
+		 * check, so all paths drain before sleeping. */
+		static int sLoopDebug = -1;
+		if (sLoopDebug < 0)
+			sLoopDebug = access("/tmp/input_server_debug", F_OK) == 0;
+
 		struct epoll_event fired;
-		if (epoll_wait(fEpollFd, &fired, 1, 100) <= 0) {
+		int pending = libevdev_has_event_pending(fInputHandle);
+		if (sLoopDebug > 0 && pending != 0)
+			fprintf(stderr, "kbd: pending=%d\n", pending);
+		if (pending <= 0
+			&& epoll_wait(fEpollFd, &fired, 1, 100) <= 0) {
 			/* Timeout: reconcile shadow state with the kernel's actual key
 			 * state via EVIOCGKEY. Recovers from any dropped EV_KEY UP event
 			 * (QEMU input grabs, libevdev/libinput drops, focus changes). */
@@ -487,9 +507,13 @@ KeyboardDevice::_ControlThread()
 #endif
 			if (fFD < 0)
 				continue;
-			/* 128 bytes = 1024 bits — covers all standard keys (KEY_MAX ≤ 767). */
+			/* 128 bytes = 1024 bits — covers all standard keys (KEY_MAX ≤ 767).
+			 * NOTE: evdev "get bits" ioctls return the number of bytes
+			 * copied on success (drivers/input/evdev.c bits_to_user), NOT
+			 * 0 — the old `!= 0` check made this whole reconciliation
+			 * block silently dead code since the day it was written. */
 			uint8_t keyBits[128] = {};
-			if (ioctl(fFD, EVIOCGKEY(128), keyBits) != 0)
+			if (ioctl(fFD, EVIOCGKEY(128), keyBits) < 0)
 				continue;
 
 #define _HWBIT(c) ((keyBits[(c) >> 3] >> ((c) & 7)) & 1)
@@ -594,6 +618,10 @@ KeyboardDevice::_ControlThread()
 		struct input_event ev;
 		int rc = libevdev_next_event(fInputHandle,
 			LIBEVDEV_READ_FLAG_NORMAL, &ev);
+		if (sLoopDebug > 0)
+			fprintf(stderr, "kbd: rc=%d type=%d code=%d val=%d\n", rc,
+				rc >= 0 ? ev.type : -1, rc >= 0 ? ev.code : -1,
+				rc >= 0 ? ev.value : -1);
 		if (rc == LIBEVDEV_READ_STATUS_SYNC) {
 			/* SYN_DROPPED: kernel dropped events (ring buffer overflow).
 			 * Drain the libevdev sync queue so it exits sync mode; without

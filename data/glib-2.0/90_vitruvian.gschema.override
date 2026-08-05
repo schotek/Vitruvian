@@ -1,0 +1,16 @@
+# System defaults for GTK3+ apps under Vitrine (GTK-on-Wayland reads
+# GSettings, not /etc/gtk-3.0/settings.ini, once gsettings-desktop-schemas
+# is installed — both are shipped so either path yields the BeOS look).
+# Installed to /usr/share/glib-2.0/schemas/; the libglib2.0 dpkg file
+# trigger recompiles the schema cache automatically at image build.
+[org.gnome.desktop.interface]
+gtk-theme = 'BeOS'
+# BeOS sizes fonts at the 72dpi convention (nominal 12 = 12px); GTK converts
+# points at 96dpi. Scaling 96->72 (0.75) with the SAME nominal size as the
+# native side gives pixel-identical text (12pt * 96dpi * 0.75 = 12px).
+font-name = 'Sans 12'
+text-scaling-factor = 0.75
+
+[org.gnome.desktop.wm.preferences]
+# Vitrine draws BeOS server-side decorations — no client window buttons.
+button-layout = ':'

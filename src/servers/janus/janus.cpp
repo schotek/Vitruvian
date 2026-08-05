@@ -3,6 +3,7 @@
  * Distributed under the terms of the GPL License.
  */
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -77,6 +78,11 @@ static const KnownServer kKnownServers[] = {
 	  false, true  },
 	{ "Tracker",
 	  "application/x-vnd.Be-TRAK",
+	  NULL,
+	  false, true  },
+	{ "Vitrine",  // nested Wayland compositor (rootless by default; the
+	              // rootful debug mode is CLI-only by decision 2026-08-05)
+	  "application/x-vnd.vos-Vitrine",
 	  NULL,
 	  false, true  },
 	{ "vitruvian-login",
@@ -615,6 +621,20 @@ handle_launch_job(BPrivate::KMessage& kmsg, uid_t sender_uid)
 		setenv("XDG_DATA_DIRS",   "/system/data:/usr/local/share:/usr/share", 0);
 		setenv("XDG_CONFIG_DIRS", "/system/settings:/etc/xdg",                0);
 
+		// Wayland/X11 session environment. Static values are safe because
+		// vitrine binds wayland-0 and Xwayland :0 deterministically (stale
+		// sockets are swept at compositor start), and they must be set
+		// HERE, not only in profile.d — Tracker-launched applications
+		// never source a login shell. Overwrite=0 keeps admin overrides.
+		if (access("/system/servers/Vitrine", X_OK) == 0) {
+			setenv("WAYLAND_DISPLAY",       "wayland-0",   0);
+			setenv("DISPLAY",               ":0",          0);
+			setenv("QT_QPA_PLATFORM",       "wayland",     0);
+			setenv("GDK_BACKEND",           "wayland,x11", 0);
+			setenv("GTK_THEME",             "BeOS",        0);
+			setenv("LIBGL_ALWAYS_SOFTWARE", "1",           0);
+		}
+
 		// User-mode: already correct uid; initgroups would need CAP_SETGID.
 		if (ks->run_as_user && sSystemMode) {
 			if (sUserUid == (uid_t)-1) {
@@ -635,6 +655,33 @@ handle_launch_job(BPrivate::KMessage& kmsg, uid_t sender_uid)
 			setenv("HOME",    sUserHome, 1);
 			setenv("USER",    sUserName, 1);
 			setenv("LOGNAME", sUserName, 1);
+
+			// XDG_RUNTIME_DIR: pam_systemd/logind provides it through
+			// sPamEnv above (verified working on the ISO). The fallback
+			// (finding #3) covers PAM stacks without pam_systemd: use
+			// the tmpfiles-created /run/vos/user (0755 under a 0711
+			// /run/vos so the user can traverse), owned per-user 0700.
+			// Still root here — mkdir/chown must precede the drop.
+			if (getenv("XDG_RUNTIME_DIR") == NULL) {
+				char rundir[64];
+				snprintf(rundir, sizeof(rundir), "/run/user/%u",
+					(unsigned)sUserUid);
+				struct stat st;
+				if (stat(rundir, &st) != 0) {
+					snprintf(rundir, sizeof(rundir),
+						"/run/vos/user/%u", (unsigned)sUserUid);
+					if (mkdir(rundir, 0700) == 0
+							|| errno == EEXIST) {
+						if (chown(rundir, sUserUid,
+								sUserGid) != 0)
+							fprintf(stderr, "janus: chown(%s): "
+								"%s\n", rundir,
+								strerror(errno));
+					}
+				}
+				setenv("XDG_RUNTIME_DIR", rundir, 1);
+			}
+
 			if (initgroups(sUserName, sUserGid) != 0
 					|| setgid(sUserGid) != 0
 					|| setuid(sUserUid) != 0) {
@@ -851,9 +898,18 @@ verify_password(const char* username, const char* password)
 static bool
 _is_pre_auth_server(const char* name)
 {
+	// input_server belongs here too: it runs pre-auth to drive the greeter
+	// (see the VITRUVIAN_FALLBACK_INPUT comment in handle_launch_job).
+	// Before it was listed, kill_pre_auth_chain() left the greeter-phase
+	// instance running after login; both it and the session instance then
+	// read /dev/input/event* concurrently and fed the same app_server, so
+	// every key arrived twice from two readers with independent shadow
+	// states — orderings where a stale KEY_DOWN lands after the real
+	// KEY_UP made nested X clients autorepeat the key forever.
 	return strcmp(name, "vitruvian-login") == 0
 		|| strcmp(name, "FirstBootPrompt") == 0
 		|| strcmp(name, "app_server") == 0
+		|| strcmp(name, "input_server") == 0
 		|| strcmp(name, "registrar") == 0;
 }
 
@@ -927,6 +983,59 @@ seed_user_settings_from_preauth(const char* userHome, uid_t uid, gid_t gid)
 }
 
 
+// The greeter app_server launches input_server through BRoster when it runs
+// without embedded input (Desktop::_LaunchInputServer,
+// src/servers/app/Desktop.cpp:2558), so that instance is spawned by the
+// greeter registrar — it never passes through handle_launch_job and is NOT
+// in sApps. After login the tracked pre-auth servers die but this orphan
+// survives (ppid=1) and keeps feeding the NEW session's app_server through
+// the global ports: every key then arrives twice from two readers with
+// independent shadow states, and orderings where a stale KEY_DOWN lands
+// after the real KEY_UP make nested X clients autorepeat forever. Sweep
+// /proc by comm name; at the point in a session switch where this runs, no
+// input_server may legitimately exist (the session one is spawned later).
+static void
+kill_stray_input_servers()
+{
+	DIR* dir = opendir("/proc");
+	if (dir == NULL)
+		return;
+
+	struct dirent* de;
+	while ((de = readdir(dir)) != NULL) {
+		char* end = NULL;
+		long pid = strtol(de->d_name, &end, 10);
+		if (end == NULL || *end != '\0' || pid <= 1
+			|| (pid_t)pid == getpid())
+			continue;
+
+		char path[64];
+		char comm[64] = "";
+		snprintf(path, sizeof(path), "/proc/%ld/comm", pid);
+		FILE* f = fopen(path, "r");
+		if (f == NULL)
+			continue;
+		if (fgets(comm, sizeof(comm), f) == NULL)
+			comm[0] = '\0';
+		fclose(f);
+		comm[strcspn(comm, "\n")] = '\0';
+		if (strcmp(comm, "input_server") != 0)
+			continue;
+
+		fprintf(stderr, "janus: killing stray input_server pid=%ld\n", pid);
+		kill((pid_t)pid, SIGTERM);
+		for (int ms = 0; ms < 500; ms += 20) {
+			if (kill((pid_t)pid, 0) != 0)
+				break;
+			usleep(20 * 1000);
+		}
+		if (kill((pid_t)pid, 0) == 0)
+			kill((pid_t)pid, SIGKILL);
+	}
+	closedir(dir);
+}
+
+
 static void
 kill_pre_auth_chain()
 {
@@ -982,6 +1091,56 @@ kill_pre_auth_chain()
 	}
 	sAppCount = keep;
 	pthread_mutex_unlock(&sAppsLock);
+
+	// Catch the BRoster-launched greeter input_server that never appears
+	// in sApps (see kill_stray_input_servers). Runs after the tracked
+	// kills so the sweep only ever sees genuine strays.
+	kill_stray_input_servers();
+}
+
+
+/*!	Reads the user's Vitrine autostart preference (written by the Vitrine
+	preferences panel, src/preferences/vitrine). Plain "key = value" text,
+	same shape as the input server's xkb_layout. Anything unreadable or
+	unparsable means the default: an image that ships Vitrine starts it
+	unless the user opted out. Called as root before the privilege drop —
+	the file belongs to the session user, which root can read.
+*/
+static bool
+vitrine_autostart_enabled()
+{
+	if (sUserHome[0] == '\0')
+		return true;
+
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/config/settings/vitrine", sUserHome);
+	FILE* file = fopen(path, "r");
+	if (file == NULL)
+		return true;
+
+	bool enabled = true;
+	char line[256];
+	while (fgets(line, sizeof(line), file) != NULL) {
+		char* p = line;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p == '#' || strncmp(p, "autostart", 9) != 0)
+			continue;
+		p += 9;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p != '=')
+			continue;
+		p++;
+		while (isspace((unsigned char)*p))
+			p++;
+		enabled = !(strncasecmp(p, "false", 5) == 0
+			|| strncasecmp(p, "no", 2) == 0
+			|| strncasecmp(p, "off", 3) == 0
+			|| *p == '0');
+	}
+	fclose(file);
+	return enabled;
 }
 
 
@@ -1040,6 +1199,21 @@ post_auth_thread(void* /*arg*/)
 	};
 	for (int i = 0; kFanOut[i] != NULL; i++)
 		fire_janus_launch(kFanOut[i]);
+
+	// Nested Wayland compositor (rootless is its no-argument default;
+	// X11 apps ride on its lazy XWayland). Optional component: only
+	// amd64 images built with --enable-wayland ship it, hence the
+	// existence guard instead of an unconditional launch that would log
+	// "binary not found" everywhere else. No readiness wait: the binary
+	// retries the app_server shim internally, and nothing later in this
+	// chain depends on the wayland socket.
+	if (access("/system/servers/Vitrine", X_OK) == 0) {
+		if (vitrine_autostart_enabled())
+			fire_janus_launch("Vitrine");
+		else
+			fprintf(stderr, "janus: Vitrine autostart disabled by the "
+				"user's settings\n");
+	}
 	return NULL;
 }
 

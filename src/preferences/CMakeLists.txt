@@ -19,3 +19,4 @@ add_subdirectory(sounds)
 #add_subdirectory(time)         # needs bnetapi
 add_subdirectory(tracker)
 add_subdirectory(user)
+add_subdirectory(vitrine)
