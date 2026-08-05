@@ -22,6 +22,19 @@ run_qemu() {
         _serial_args="-serial file:$_logfile"
     fi
 
+    # Emulate an Intel HDA sound card (output + mic) when the host QEMU has
+    # a usable audio backend. QEMU exits with an error on an unavailable
+    # -audiodev driver, so probe first; without a backend just boot silent.
+    _audio_args=""
+    _audio_drivers="$("$_qemu_cmd" -audiodev help 2>/dev/null)"
+    for _drv in pipewire pa sdl alsa; do
+        if printf '%s\n' "$_audio_drivers" | grep -qx "$_drv"; then
+            _audio_args="-audiodev $_drv,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0"
+            break
+        fi
+    done
+    [ -n "$_audio_args" ] || log_warn "No usable QEMU audio backend (pipewire/pa/sdl/alsa) - booting without sound."
+
     case "$_image_type" in
         raw)
             _raw="$_basedir/output/vitruvian.raw"
@@ -45,6 +58,7 @@ run_qemu() {
                         -netdev user,id=mynet,hostfwd=tcp::2222-:22 \
                         -device virtio-net-pci,netdev=mynet \
                         -virtfs local,path="$_host_shared",mount_tag=host_shared,security_model=mapped-xattr,id=host_shared \
+                        $_audio_args \
                         $_serial_args
                     ;;
                 arm64)
@@ -86,6 +100,7 @@ run_qemu() {
                         -m 8G -cpu host -smp sockets=1,cores=2,threads=2 --enable-kvm \
                         -netdev user,id=mynet,hostfwd=tcp::2222-:22 \
                         -device virtio-net-pci,netdev=mynet \
+                        $_audio_args \
                         $_serial_args
                     ;;
                 arm64)
