@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <new>
 #include <errno.h>
+#include <fcntl.h>
 #include <libdrm/drm_mode.h>
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -148,6 +149,21 @@ DrmHWInterface::OnSeatDisabled()
 }
 
 
+// Boot splash coordination, fire-and-forget (without a running splash
+// the open fails and nothing happens). "handoff": we are about to claim
+// the display, stop animating as DRM master. "quit": our framebuffer is
+// on the CRTC now, exiting cannot leave a black screen behind.
+static void
+notify_splash(const char* cmd)
+{
+	int fd = open("/run/vos/splash.ctl", O_WRONLY | O_NONBLOCK);
+	if (fd < 0)
+		return;
+	dprintf(fd, "%s\n", cmd);
+	close(fd);
+}
+
+
 void
 DrmHWInterface::_OnSessionEnable()
 {
@@ -169,10 +185,18 @@ DrmHWInterface::_OnSessionEnable()
 		return;
 	}
 
+	notify_splash("handoff");
+
 	const char* janusDrmFdStr = getenv("JANUS_DRM_FD");
 	if (janusDrmFdStr != NULL && janusDrmFdStr[0] != '\0') {
 		fFd = atoi(janusDrmFdStr);
 		fDeviceId = 0;
+		// janus takes the DRM master on this fd right before spawning
+		// us (see claim_drm_master_for_app_server), and master status
+		// lives on the open file description — the inherited fd is a
+		// master fd already. Calling drmSetMaster here would be both
+		// pointless and impossible: an unprivileged process may not
+		// issue SET_MASTER on an fd another process opened.
 	} else {
 		char path[B_PATH_NAME_LENGTH];
 		for (int i = 0; i <= 9; ++i) {
@@ -305,6 +329,12 @@ DrmHWInterface::_OnSessionEnable()
 	fDisplayMode.h_display_start = 0;
 	fDisplayMode.v_display_start = 0;
 	fDisplayMode.flags = 0;
+
+	// The initial modeset above put our framebuffer on the CRTC — the
+	// boot splash can exit without leaving a black screen. (SetMode
+	// sends the same thing for the paths that go through it; the
+	// splash takes whichever arrives first.)
+	notify_splash("quit");
 
 	fInitialized = true;
 	fSessionActive = true;
@@ -783,6 +813,10 @@ DrmHWInterface::SetMode(const display_mode& mode)
 
 	fRenderBuffer = new MallocBuffer(dev->width, dev->height);
 
+	// Opportunistic: a no-op when we already are the DRM master, and
+	// picks the master up when it just became free (boot splash exit).
+	drmSetMaster(fFd);
+
 	int ret;
 	if (fAtomicSupported && fPrimaryPlaneId) {
 		if (_AtomicModeset(dev->fb, &dev->mode) != B_OK) {
@@ -798,6 +832,9 @@ DrmHWInterface::SetMode(const display_mode& mode)
 			return B_ERROR;
 		}
 	}
+
+	// Our framebuffer is scanning out now; the splash can leave.
+	notify_splash("quit");
 
 	fDisplayMode.virtual_width  = dev->width;
 	fDisplayMode.virtual_height = dev->height;
