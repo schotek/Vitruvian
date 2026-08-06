@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <libdrm/drm.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1144,6 +1145,47 @@ vitrine_autostart_enabled()
 }
 
 
+// Fire-and-forget progress for the boot splash. O_NONBLOCK: with no
+// reader (splash absent or already gone) open fails with ENXIO and the
+// boot just carries on.
+static void
+splash_notify(const char* cmd)
+{
+	int fd = open("/run/vos/splash.ctl", O_WRONLY | O_NONBLOCK);
+	if (fd < 0)
+		return;
+	dprintf(fd, "%s\n", cmd);
+	close(fd);
+}
+
+
+// DRM master is a property of the open file description, so taking it
+// on sDrmFd right before spawning app_server means the inherited
+// JANUS_DRM_FD arrives there already as a master fd. Doing this dance
+// in app_server itself was a lost race: the moment the splash dropped
+// the master, any open() of the card (Mesa device probes…) could
+// auto-acquire it, and an unprivileged app_server could never take it
+// back. Root cannot steal an actively held master either, hence the
+// short wait for the splash to let go after "handoff".
+static void
+claim_drm_master_for_app_server()
+{
+	splash_notify("handoff");
+	if (sDrmFd < 0)
+		return;
+	for (int i = 0; i < 30; i++) {
+		if (ioctl(sDrmFd, DRM_IOCTL_SET_MASTER, 0) == 0) {
+			fprintf(stderr, "janus: DRM master taken (fd=%d, uid=%u, "
+				"attempt %d)\n", sDrmFd, (unsigned)getuid(), i);
+			return;
+		}
+		usleep(50 * 1000);
+	}
+	fprintf(stderr, "janus: could not take DRM master (%s)\n",
+		strerror(errno));
+}
+
+
 static void
 fire_janus_launch(const char* name)
 {
@@ -1185,13 +1227,17 @@ wait_for_server_ready(const char* name, int timeout_ms)
 static void*
 post_auth_thread(void* /*arg*/)
 {
+	splash_notify("stage 2");
 	fire_janus_launch("registrar");
 	if (!wait_for_server_ready("registrar", 5000))
 		fprintf(stderr, "janus: post-auth registrar not ready in 5s\n");
+	splash_notify("stage 3");
 
+	claim_drm_master_for_app_server();
 	fire_janus_launch("app_server");
 	if (!wait_for_server_ready("app_server", 5000))
 		fprintf(stderr, "janus: post-auth app_server not ready in 5s\n");
+	splash_notify("stage 4");
 
 	static const char* const kFanOut[] = {
 		"input_server", "mount_server", "notification_server",
@@ -1214,6 +1260,7 @@ post_auth_thread(void* /*arg*/)
 			fprintf(stderr, "janus: Vitrine autostart disabled by the "
 				"user's settings\n");
 	}
+	splash_notify("stage 5");
 	return NULL;
 }
 
@@ -1340,17 +1387,25 @@ pre_auth_thread(void* /*arg*/)
 			? "vitruvian-login"
 			: "FirstBootPrompt";
 
+	splash_notify("stage 2");
 	fire_janus_launch("registrar");
 	if (!wait_for_server_ready("registrar", 5000))
 		fprintf(stderr, "janus: pre-auth registrar not ready in 5s\n");
+	splash_notify("stage 3");
 
+	claim_drm_master_for_app_server();
 	fire_janus_launch("app_server");
 	if (!wait_for_server_ready("app_server", 5000))
 		fprintf(stderr, "janus: pre-auth app_server not ready in 5s\n");
+	splash_notify("stage 4");
 
 	fire_janus_launch(frontend);
 	if (!wait_for_server_ready(frontend, 5000))
 		fprintf(stderr, "janus: pre-auth %s not ready in 5s\n", frontend);
+	splash_notify("stage 5");
+	// No "quit" from here: app_server sends it itself right after its
+	// first successful modeset, when replacing the splash cannot leave
+	// a black screen behind.
 	return NULL;
 }
 
