@@ -69,6 +69,12 @@ create_raw() {
 
     require_cmd rsync rsync
 
+    BUILD_TYPE="Release"
+    if [ -f "$_basedir/buildconfig.conf" ]; then
+        . "$_basedir/buildconfig.conf"
+        BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
+    fi
+
     _raw="$_basedir/output/vitruvian.raw"
     _mnt="/mnt/vitruvian"
     _hostname="vitruvian"
@@ -183,7 +189,7 @@ dpkg --purge --force-all live-boot live-boot-initramfs-tools \
     live-config live-config-systemd live-tools 2>/dev/null || true
 apt-get -y autoremove --purge 2>/dev/null || true
 
-apt-get install -y --no-install-recommends $_raw_pkgs
+apt-get install -y --no-install-recommends $_raw_pkgs fdisk e2fsprogs
 
 # Re-derive the running kernel version from /lib/modules. linux-image
 # metapackages can land a newer ABI than imagekernelversion.conf knew about.
@@ -237,6 +243,38 @@ rm -rf /localdeb" || die "raw chroot bash-c failed"
 
     _common_chroot_setup "$_mnt" "$_hostname" "$_user" "$_pass" \
         || die "_common_chroot_setup failed"
+
+    # A raw disk is an installed system: seed the sentinel janus checks
+    # (pre_auth_thread), so boots go straight to the greeter instead of the
+    # ISO's FirstBootPrompt install/try chooser.
+    sudo mkdir -p "$_mnt/var/lib/vos"
+    sudo touch "$_mnt/var/lib/vos/first-boot-done"
+
+    # Same debug SSH access as the ISO (create_iso): root/live, Debug only.
+    if [ "$BUILD_TYPE" = "Debug" ]; then
+        log_step "Configuring SSH server for debug access..."
+        sudo chroot "$_mnt" /bin/bash -eux <<'SSHEOF'
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/debug.conf <<'EOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+EOF
+chmod 0644 /etc/ssh/sshd_config.d/debug.conf
+chown root:root /etc/ssh/sshd_config.d/debug.conf
+# _common_chroot_setup locks root (passwd -l); unlock it with the advertised
+# debug password, exactly as the ISO does.
+echo 'root:live' | chpasswd
+mkdir -p /root/.ssh
+chmod 0700 /root/.ssh
+chown root:root /root/.ssh
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable ssh.service 2>/dev/null || true
+fi
+SSHEOF
+        log_info "SSH server configured."
+    fi
 
     case "$_arch" in
         amd64)   _boot_efi="BOOTX64.EFI" ;;
@@ -313,16 +351,22 @@ EOF
     sudo tee "$_mnt/usr/local/sbin/vos-resize-root" >/dev/null <<'RSZEOF'
 #!/bin/sh
 # First-boot only: grow the root partition to fill the target disk and
-# resize the ext4 FS. Uses sfdisk (util-linux) and resize2fs (e2fsprogs),
-# both guaranteed on any Debian install.
+# resize the ext4 FS, entirely online. Uses sfdisk + partx (fdisk/
+# util-linux) and resize2fs (e2fsprogs) — create_raw installs both
+# packages, minbase debootstrap has neither.
+# sfdisk refuses to touch an in-use disk without --no-reread --force, and
+# the kernel only learns the new size via partx (BLKPG), not partprobe —
+# the naive version failed silently here and still disabled itself.
+# No `|| true` on the real work: a failure leaves the unit enabled, so it
+# retries on the next boot and shows up in systemctl as failed.
 set -e
 _root=$(findmnt -no SOURCE /)
 _disk=$(lsblk -no PKNAME "$_root")
 [ -n "$_disk" ] || exit 0
 _partnum=$(echo "$_root" | sed 's|.*[^0-9]||')
-echo ", +" | sfdisk -N "$_partnum" "/dev/$_disk" || true
-partprobe "/dev/$_disk" 2>/dev/null || true
-resize2fs "$_root" || true
+echo ", +" | sfdisk --no-reread --force -N "$_partnum" "/dev/$_disk"
+partx -u "/dev/$_disk"
+resize2fs "$_root"
 systemctl disable vos-resize-root.service || true
 RSZEOF
     sudo chmod +x "$_mnt/usr/local/sbin/vos-resize-root"

@@ -3,6 +3,9 @@
 # Boots a built Vitruvian ISO in QEMU/KVM. Needs no root
 # (just membership in the `kvm` group).
 #
+# Sound: an Intel HDA card is emulated automatically when the host QEMU
+# offers a usable audio backend (pipewire/pa/sdl/alsa); see lib/qemu.sh.
+#
 # Usage:
 #     bash build/host/boot.sh                          # graphical QEMU window
 #     bash build/host/boot.sh --enable-console-stdout  # + serial console to terminal
