@@ -71,6 +71,62 @@ vitrine_xwayland_top_or_win_id(struct vitrine_server *server)
 	return -1;
 }
 
+/* Mirror "who is on top" from BeOS into X stacking (F7). X core input picks
+ * the event window by walking the X stacking order, so a stack that never
+ * follows what the user sees routes clicks into whatever window happens to
+ * be above in X — reproduced with Steam's settings modal, which rendered
+ * above the main window yet never saw a click (even via XTEST). Only the
+ * top window is mirrored: it is the only one the pointer interacts with.
+ *
+ * Two silencers keep the original F7 regression (a ConfigureNotify landing
+ * mid-grab pops down a just-opened spring-loaded Xt menu) impossible:
+ * - dedupe: a FOCUS_IN for the window that is already X-top sends nothing;
+ * - menu gate: while any menu is mapped (Wayland popup or override-redirect
+ *   X window), the raise is deferred — STACK_MODE_ABOVE would lift the
+ *   window above the open menu and steal its pointer picking. */
+static void
+xwindow_restack_top(struct vitrine_xwindow *xw)
+{
+	struct vitrine_server *server = xw->server;
+
+	if (xw->or_window || xw->xsurface == NULL || xw->window == NULL)
+		return;
+	if (server->x_top == xw && !xw->restack_pending)
+		return;
+	if (vitrine_popup_top_win_id(server) >= 0
+			|| vitrine_xwayland_top_or_win_id(server) >= 0) {
+		xw->restack_pending = true;
+		return;
+	}
+	xw->restack_pending = false;
+	wlr_xwayland_surface_restack(xw->xsurface, NULL, XCB_STACK_MODE_ABOVE);
+	server->x_top = xw;
+}
+
+void
+vitrine_xwayland_flush_pending_restack(struct vitrine_server *server)
+{
+	/* popup.c calls this unconditionally; xwindows is only a live list
+	 * once xwayland_init ran (rootless with XWayland available). */
+	if (server->xwayland == NULL)
+		return;
+	/* Newest-first: the first pending window is the top candidate; anyone
+	 * older pending lost the race and no longer belongs on top. */
+	struct vitrine_xwindow *xw;
+	bool raised = false;
+	wl_list_for_each(xw, &server->xwindows, link) {
+		if (!xw->restack_pending)
+			continue;
+		if (!raised) {
+			xwindow_restack_top(xw);
+			/* still pending if another menu is up — keep it */
+			raised = !xw->restack_pending;
+		} else {
+			xw->restack_pending = false;
+		}
+	}
+}
+
 struct wlr_surface *
 vitrine_xwayland_surface_at_win(struct vitrine_server *server, int win_id,
 	double x, double y, double *sx, double *sy)
@@ -141,8 +197,15 @@ xwindow_schedule_teardown(struct vitrine_xwindow *xw)
 	wlr_log(WLR_INFO, "x window %d torn down", xw->win_id);
 	xw->teardown_scheduled = true;
 	xw->window = NULL; /* stale win_id events now drop by contract */
+	xw->restack_pending = false;
+	if (xw->server->x_top == xw)
+		xw->server->x_top = NULL;
 	wl_event_loop_add_idle(xw->server->event_loop, xwindow_teardown_idle,
 		xw);
+	/* window == NULL above already hid this window from the menu gate, so
+	 * a raise deferred behind a dying X menu can run right now. */
+	if (xw->or_window)
+		vitrine_xwayland_flush_pending_restack(xw->server);
 }
 
 /* ---- placement (PoC rules: ICCCM position honoring + center/cascade) ---- */
@@ -295,6 +358,10 @@ xwindow_map(struct vitrine_xwindow *xw)
 	if (!xs->override_redirect) {
 		wlr_xwayland_surface_activate(xs, true);
 		vitrine_focus_surface(server, xs->surface);
+		/* A freshly shown BWindow is frontmost on the BeOS side;
+		 * mirror that into X right away so the first hover/click
+		 * already picks this window (F7). */
+		xwindow_restack_top(xw);
 	}
 	/* Override-redirect windows: hands OFF both X input focus AND wl
 	 * keyboard focus. Either shift reaches the grabbing client as an X
@@ -516,15 +583,14 @@ vitrine_xwayland_handle_window_event(struct vitrine_server *server,
 
 	case BE_WINDOW_FOCUS_IN:
 		wlr_xwayland_surface_activate(xs, true);
-		/* NO wlr_xwayland_surface_restack here: the resulting
-		 * ConfigureNotify lands on the client a few ms after its own
-		 * ButtonPress — exactly when a spring-loaded Xt menu is being
-		 * opened — and pops it down (reproduced: xterm's Ctrl menu
-		 * died 3-5 ms after map, or never opened). BeOS stacking is
-		 * authoritative for what the user sees; mirroring it into X
-		 * stacking needs a quieter mechanism (F7 backlog). */
 		if (xs->surface != NULL)
 			vitrine_focus_surface(server, xs->surface);
+		/* The quieter F7 mechanism the earlier comment asked for:
+		 * xwindow_restack_top() dedupes (an already-top window sends
+		 * no ConfigureNotify at all — the reproduced Xt-menu killer
+		 * was exactly a redundant FOCUS_IN restack) and defers while
+		 * any menu is mapped. */
+		xwindow_restack_top(xw);
 		break;
 
 	case BE_WINDOW_FOCUS_OUT:

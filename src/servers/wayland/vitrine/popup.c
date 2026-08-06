@@ -155,6 +155,9 @@ popup_schedule_teardown(struct vitrine_popup *popup)
 	popup->window = NULL;
 	wl_event_loop_add_idle(popup->server->event_loop, popup_teardown_idle,
 		popup);
+	/* window == NULL above already hid this popup from the F7 menu gate;
+	 * an X raise deferred behind it can run now (no-op without XWayland). */
+	vitrine_xwayland_flush_pending_restack(popup->server);
 }
 
 static void

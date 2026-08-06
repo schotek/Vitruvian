@@ -108,6 +108,8 @@ struct vitrine_server {
 	struct wl_list xwindows;                /* vitrine_xwindow.link, newest first */
 	struct wl_listener xw_ready;
 	struct wl_listener xw_new_surface;
+	struct vitrine_xwindow *x_top;          /* last window raised in X stacking
+	                                         * (dedupe for the F7 restack) */
 };
 
 /* Rootless X11 window (phase 4): same private-scene + internal-output +
@@ -128,6 +130,8 @@ struct vitrine_xwindow {
 	int width, height;
 	bool or_window;                         /* override-redirect at map time */
 	bool teardown_scheduled;
+	bool restack_pending;                   /* X raise deferred while a menu
+	                                         * (popup/OR window) is mapped */
 
 	struct wl_listener destroy;
 	struct wl_listener request_configure;
@@ -298,6 +302,10 @@ void vitrine_xwayland_handle_window_event(struct vitrine_server *server,
 /* win_id of the newest live override-redirect X window, or -1 (extends the
  * popup snoop-consume rule in input.c to X menus). */
 int vitrine_xwayland_top_or_win_id(struct vitrine_server *server);
+/* Perform an X raise that was deferred while a menu was open (called from
+ * both teardown paths that can close the menu: OR X windows and Wayland
+ * popups). */
+void vitrine_xwayland_flush_pending_restack(struct vitrine_server *server);
 /* Hit-test within one X window's scene (win_id routing, input.c). */
 struct wlr_surface *vitrine_xwayland_surface_at_win(
 	struct vitrine_server *server, int win_id, double x, double y,
