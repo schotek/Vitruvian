@@ -212,6 +212,9 @@ private:
 			// and current is cleared.
 			BRegion				fAccumulatedDirty;
 			BRegion				fPreviousDirty;
+			// Set when a completed flip left damage that still has to be
+			// presented; cleared once that follow-up flip is issued.
+			bool				fNeedsFlip;
 			pthread_mutex_t		fDirtyMutex;
 
 			int					fWakeFd;
