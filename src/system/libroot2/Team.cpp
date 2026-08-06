@@ -8,6 +8,7 @@
 #include "Team.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -276,9 +277,12 @@ Team::SyncFatherAtFork()
 	TRACE("SyncFatherAtFork()\n");
 
 	int nexus = BKernelPrivate::Team::GetNexusDescriptor();
-	thread_id id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	thread_id id;
+	do {
+		id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	} while (id == -EINTR);
 	if (id < 0)
-		printf("Fork failed\n");
+		printf("SyncFatherAtFork: newborn wait failed (%d)\n", (int)id);
 }
 
 
@@ -368,8 +372,12 @@ Team::LoadImage(int32 argc, const char** argv, const char** envp)
 
 		int nexus = BKernelPrivate::Team::GetNexusDescriptor();
 		thread_id id = nexus_io(nexus, NEXUS_THREAD_CLONE_EXECUTED, NULL);
-		if (id < 0)
-			printf("Fork failed\n");
+		if (id < 0) {
+			printf("load_image child: check-in failed (%d)\n", (int)id);
+			// The father can never learn our id now; exec'ing anyway
+			// would leave a team nobody supervises or can resume.
+			_exit(125);
+		}
 
 		execvpe(argv[0], const_cast<char* const*>(argv),
 			envp ? const_cast<char* const*>(envp) : environ);
@@ -382,9 +390,12 @@ Team::LoadImage(int32 argc, const char** argv, const char** envp)
 	}
 
 	int nexus = BKernelPrivate::Team::GetNexusDescriptor();
-	thread_id id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	thread_id id;
+	do {
+		id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	} while (id == -EINTR);
 	if (id < 0) {
-		printf("Fork failed\n");
+		printf("load_image: newborn wait failed (%d)\n", (int)id);
 		return B_BAD_THREAD_ID;
 	}
 

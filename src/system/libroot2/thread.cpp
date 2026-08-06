@@ -97,7 +97,10 @@ spawn_thread(thread_func func, const char* name, int32 priority, void* data)
 	}
 
 	int nexus = BKernelPrivate::Team::GetNexusDescriptor();
-	thread_id id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	thread_id id;
+	do {
+		id = nexus_io(nexus, NEXUS_THREAD_WAIT_NEWBORN, NULL);
+	} while (id == -EINTR);
 	if (id < 0)
 		return B_BAD_THREAD_ID;
 	return id;
