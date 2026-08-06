@@ -12,6 +12,10 @@ set(SYSTEM_SERVERS
 )
 ImageInclude("/system/servers" ${SYSTEM_SERVERS})
 
+# Boot splash: no BeOS attrs/rdef, so it stays out of SYSTEM_SERVERS
+# (whose list also drives the apps_attrs staging tarball).
+ImageInclude("/system/servers" vitruvian-splash)
+
 
 set(INPUT_SERVER_ADDONS
 	keyboard

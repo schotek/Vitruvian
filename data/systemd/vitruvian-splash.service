@@ -1,0 +1,18 @@
+[Unit]
+Description=Vitruvian boot splash
+DefaultDependencies=no
+# No dev-dri-card0.device dependency: DRM devices carry no systemd tag,
+# so the device unit never becomes active and a Wants/After on it leaves
+# the start job queued forever. The daemon polls for the card itself.
+After=systemd-udevd.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/system/servers/vitruvian-splash
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target

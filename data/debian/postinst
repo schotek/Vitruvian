@@ -201,6 +201,7 @@ fi
 # Enable system services
 
 systemctl enable janus.service registrar.service app_server.service input_server.service mount_server.service notification_server.service deskbar.service tracker.service userbootscript@vos-live.service
+systemctl enable vitruvian-splash.service 2>/dev/null || true
 
 install -m 0644 -D /usr/share/vos/systemd/vos-session.service \
 	/etc/systemd/user/vos-session.service 2>/dev/null || true
