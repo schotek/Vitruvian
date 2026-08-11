@@ -1,0 +1,5 @@
+# Screenshots and logs the suite writes for each run.
+artifacts/
+# Tarball qtbuild.sh hands to the VM.
+qhp.tgz
+__pycache__/

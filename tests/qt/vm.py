@@ -29,10 +29,12 @@ def _expect_password(child):
     child.sendline(PASSWORD)
 
 
-def run(cmd):
+def capture(cmd, timeout=None):
+    """Run cmd in the VM and return (exit status, output). Used by callers
+    that assert on the output rather than showing it."""
     child = pexpect.spawn(
         "ssh", OPTS + ["-p", PORT, HOST, cmd],
-        encoding="utf-8", timeout=TIMEOUT)
+        encoding="utf-8", timeout=timeout or TIMEOUT)
     _expect_password(child)
     try:
         child.expect(pexpect.EOF)
@@ -41,9 +43,15 @@ def run(cmd):
         # Backgrounded starts never EOF — whatever we got is the output.
         out = child.before
         child.close(force=True)
-    sys.stdout.write(out.replace("\r\n", "\n"))
     child.close()
-    return child.exitstatus if child.exitstatus is not None else 0
+    status = child.exitstatus if child.exitstatus is not None else 0
+    return status, out.replace("\r\n", "\n")
+
+
+def run(cmd):
+    status, out = capture(cmd)
+    sys.stdout.write(out)
+    return status
 
 
 def scp(src, dst):
