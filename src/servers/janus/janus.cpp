@@ -618,6 +618,12 @@ handle_launch_job(BPrivate::KMessage& kmsg, uid_t sender_uid)
 		setenv("XDG_DATA_DIRS",   "/system/data:/usr/local/share:/usr/share", 0);
 		setenv("XDG_CONFIG_DIRS", "/system/settings:/etc/xdg",                0);
 
+		// Qt applications launched from Deskbar/plocha (Tracker children do
+		// not read profile.d) use the native haiku QPA plugin, falling back
+		// to the Vitrine wayland compositor if it fails to initialise.
+		// overwrite=0 respects an explicit user override.
+		setenv("QT_QPA_PLATFORM", "haiku;wayland", 0);
+
 		// User-mode: already correct uid; initgroups would need CAP_SETGID.
 		if (ks->run_as_user && sSystemMode) {
 			if (sUserUid == (uid_t)-1) {

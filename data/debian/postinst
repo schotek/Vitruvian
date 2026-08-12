@@ -181,6 +181,13 @@ if [ -z "$_VOS_PROFILE_SOURCED" ] && [ -f /system/settings/etc/profile ]; then
 fi
 VITRUVIAN_PROFILE_EOF
 
+# Qt apps from a shell use the native haiku QPA plugin, falling back to the
+# Vitrine wayland compositor. /system/settings/etc/profile.d is not sourced,
+# so install to /etc/profile.d; Deskbar/plocha children get it from janus.
+cat > /etc/profile.d/qt.sh << 'QT_PROFILE_EOF'
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-haiku;wayland}"
+QT_PROFILE_EOF
+
 # MIME database — install with xattrs preserved
 # mime_db.tar is a tarball of the mime_db/ directory tree with BeOS xattrs
 # (user.beos.*) captured via tar --xattrs during the build. CPack cannot
