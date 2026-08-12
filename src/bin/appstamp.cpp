@@ -14,54 +14,17 @@
  *   BEOS:M:STD_ICON  16x16 B_CMAP8   ('MICN')
  *   BEOS:L:STD_ICON  32x32 B_CMAP8   ('ICON')
  *   BEOS:ICON        HVIF vector     ('VICN', only with --hvif)
- *   BEOS:APP_SIG     MIME signature  — the QPA plugin picks this up too
- *   SYS:NAME         catalog entry   — Deskbar resolves the label while the
- *                                      application is RUNNING, so FindApp(sig)
- *                                      succeeds via the roster and BCatalog
- *                                      falls back to the key itself: the
- *                                      label works without any catalog
+ *   BEOS:APP_SIG     MIME signature
+ *   SYS:NAME         catalog entry (untranslated label; no catalog needed)
  *
  * dpkg does not track xattrs, so the package content stays pristine.
  *
- * WHY A STAMPING TOOL AT ALL — and what could replace it.
- *
- * Every desktop answers "how does the shell know a window's icon"
- * differently. On X11 the application PUSHES: Qt's xcb backend implements
- * QPlatformWindow::setWindowIcon() by setting _NET_WM_ICON on the window,
- * and the taskbar reads it from there. On Wayland the shell PULLS: a
- * toplevel carries only an app_id, and the compositor looks up
- * <app_id>.desktop and the icon theme itself (xdg-toplevel-icon-v1 adds a
- * push path, but .desktop matching remains the norm). On BeOS the shell
- * pulls too, but from the EXECUTABLE FILE: Deskbar goes signature ->
- * be_roster -> binary -> BAppFileInfo, and native applications carry their
- * icon in resources from the day they are compiled.
- *
- * Qt applications push their icon into our QPA plugin exactly as they do
- * on X11 — QGuiApplication::setWindowIcon() ends up calling the plugin's
- * QPlatformWindow::setWindowIcon(). The plugin drops it, because there is
- * no receiving end: BWindow has no icon API, TBarApp::MessageReceived()
- * accepts no per-team icon message, and the plugin (running as the session
- * user) cannot stamp a root-owned binary. The icon arrives and dies.
- *
- * So the clean replacement for the Deskbar half of this tool is a runtime
- * channel — an _NET_WM_ICON analogue: teach Deskbar (or the registrar) a
- * "set icon/name for this team" message and implement setWindowIcon() in
- * the QPA plugin to send it. Debian Qt applications would then get their
- * icons with no stamping at all, exactly like on X11. That is a platform
- * behaviour change, i.e. an upstream conversation, not something to slip
- * into a bridge tool.
- *
- * Even then this tool keeps the file-side half of the job: Tracker shows
- * a binary's icon while the application is NOT running (no runtime channel
- * can help there), and applications that never call setWindowIcon still
- * need their metadata from somewhere.
- *
- * Deliberately NOT a BApplication and deliberately no BBitmap: both need a
- * live app_server, and this tool must run from a root ssh session. PNG
- * loading is libpng's simplified API; CMAP8 quantization is a direct
- * nearest-colour search over the static system palette
- * (headers/private/interface/Palette.h).
+ * Deliberately no BApplication and no BBitmap: both need a live app_server,
+ * and this runs from a root ssh session. PNG via libpng's simplified API;
+ * CMAP8 by nearest-colour over the static system palette (Palette.h).
  */
+#include <fs_attr.h>
+
 #include <GraphicsDefs.h>
 #include <Mime.h>
 #include <Node.h>
@@ -95,6 +58,13 @@ struct DesktopEntry {
 	std::string path;
 	std::string name;
 	std::string icon;
+	std::string exec;	// raw Exec= line, for --all to resolve the binary
+	// Display gating, honored by --all (not in single-binary mode, where the
+	// user has chosen the target deliberately).
+	bool noDisplay = false;
+	bool terminal = false;
+	bool isApplication = true;	// Type= defaults to Application when absent
+	bool consoleOnly = false;	// Categories contains ConsoleOnly
 };
 
 
@@ -128,7 +98,9 @@ parseDesktopFile(const std::string& path, DesktopEntry& entry,
 
 	bool inDesktopEntry = false;
 	bool matches = wantedLeaf.empty();
-	std::string name, icon;
+	std::string name, icon, exec;
+	bool noDisplay = false, terminal = false, isApplication = true;
+	bool consoleOnly = false;
 
 	char line[1024];
 	while (fgets(line, sizeof(line), f) != NULL) {
@@ -155,15 +127,20 @@ parseDesktopFile(const std::string& path, DesktopEntry& entry,
 			name = value;
 		else if (key == "Icon")
 			icon = value;
+		else if (key == "Type")
+			isApplication = (value == "Application");
+		else if (key == "NoDisplay")
+			noDisplay = (value == "true");
+		else if (key == "Terminal")
+			terminal = (value == "true");
+		else if (key == "Categories")
+			consoleOnly = value.find("ConsoleOnly") != std::string::npos;
 		else if (key == "TryExec" || key == "Exec") {
+			// Exec is the one to run; TryExec only gates availability.
+			if (key == "Exec" && exec.empty())
+				exec = value;
 			if (execBasename(value) == wantedLeaf)
 				matches = true;
-		} else if (key == "NoDisplay" && value == "true"
-				&& !wantedLeaf.empty()) {
-			// Hidden entries (kcm modules etc.) are poor name sources when
-			// searching; an explicitly given file is the caller's choice.
-			matches = false;
-			break;
 		}
 	}
 	fclose(f);
@@ -173,6 +150,11 @@ parseDesktopFile(const std::string& path, DesktopEntry& entry,
 	entry.path = path;
 	entry.name = name;
 	entry.icon = icon;
+	entry.exec = exec;
+	entry.noDisplay = noDisplay;
+	entry.terminal = terminal;
+	entry.isApplication = isApplication;
+	entry.consoleOnly = consoleOnly;
 	return true;
 }
 
@@ -422,12 +404,234 @@ writeIconAttr(BNode& node, const char* attr, type_code type, uint32 size,
 }
 
 
+struct Options {
+	std::string signature;	// override, else derived from the leaf name
+	std::string name;		// override, else the .desktop Name=
+	std::string hvifPath;	// optional BEOS:ICON source
+	bool dryRun = false;
+	bool force = false;		// in --all: restamp binaries already stamped
+};
+
+
+// Stamp one binary from an already-resolved .desktop entry. Returns 0 on
+// success. Never fatal on a single missing piece: a binary with no icon is
+// still worth its name and signature.
+static int
+stampBinary(const std::string& binary, const DesktopEntry& entry,
+	const Options& opts)
+{
+	BNode node(binary.c_str());
+	if (node.InitCheck() != B_OK) {
+		fprintf(stderr, "appstamp: cannot open %s\n", binary.c_str());
+		return 1;
+	}
+
+	const std::string leaf = leafName(binary);
+	std::string signature = opts.signature.empty()
+		? "application/x-vnd.vos-" + leaf : opts.signature;
+	std::string name = !opts.name.empty() ? opts.name
+		: (entry.name.empty() ? leaf : entry.name);
+
+	// Raster icons: theme PNGs first, SVG rasterization as fallback.
+	if (!entry.icon.empty()) {
+		std::string png32, png16;
+		Image img32, img16;
+		bool have32 = false, have16 = false;
+
+		if (findThemePng(entry.icon, 32, png32) && loadPng(png32, img32)) {
+			have32 = true;
+			printf("  icon source: %s (%ux%u)\n", png32.c_str(),
+				img32.width, img32.height);
+			// A separate 16px file usually exists and looks better than a
+			// downscale of the large art; fall back to scaling img32.
+			have16 = findThemePng(entry.icon, 16, png16) && png16 != png32
+				&& loadPng(png16, img16);
+		} else if (rasterizeSvg(entry.icon, 32, img32)) {
+			have32 = true;
+			printf("  icon source: scalable SVG via rsvg-convert\n");
+			have16 = rasterizeSvg(entry.icon, 16, img16);
+		}
+
+		if (have32) {
+			writeIconAttr(node, kLargeAttr, B_LARGE_ICON_TYPE, 32, img32,
+				opts.dryRun);
+			writeIconAttr(node, kMiniAttr, B_MINI_ICON_TYPE, 16,
+				have16 ? img16 : img32, opts.dryRun);
+		} else {
+			fprintf(stderr, "  no usable icon for '%s'\n",
+				entry.icon.c_str());
+		}
+	}
+
+	// Optional crisp vector icon.
+	if (!opts.hvifPath.empty()) {
+		FILE* f = fopen(opts.hvifPath.c_str(), "rb");
+		if (f == NULL) {
+			fprintf(stderr, "appstamp: cannot read %s\n",
+				opts.hvifPath.c_str());
+			return 1;
+		}
+		std::vector<uint8> hvif;
+		uint8 buf[4096];
+		size_t n;
+		while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+			hvif.insert(hvif.end(), buf, buf + n);
+		fclose(f);
+		if (hvif.size() > kMaxAttrPayload) {
+			fprintf(stderr, "appstamp: %s is %zu bytes; attribute values are"
+				" capped near 4K (single ext4 xattr, no chunking)\n",
+				opts.hvifPath.c_str(), hvif.size());
+			return 1;
+		}
+		if (opts.dryRun)
+			printf("  would write %s (%zu bytes)\n", kVectorAttr, hvif.size());
+		else if (node.WriteAttr(kVectorAttr, B_VECTOR_ICON_TYPE, 0,
+				hvif.data(), hvif.size()) >= 0)
+			printf("  %s: HVIF, %zu bytes\n", kVectorAttr, hvif.size());
+	}
+
+	// Via BNode, not BAppFileInfo: the latter needs a B_READ_WRITE BFile,
+	// which fails with ETXTBSY while the app runs. Wire format matches
+	// BAppFileInfo (trailing NUL included). SYS:NAME is
+	// <sig minus "application/">:<context>:<label>; with no catalog installed
+	// BCatalog returns the label verbatim.
+	std::string sigLeaf = signature;
+	if (sigLeaf.rfind("application/", 0) == 0)
+		sigLeaf = sigLeaf.substr(strlen("application/"));
+	std::string catalogEntry = sigLeaf + ":System name:" + name;
+
+	if (opts.dryRun) {
+		printf("  would set signature %s\n", signature.c_str());
+		printf("  would set SYS:NAME %s\n", catalogEntry.c_str());
+		return 0;
+	}
+
+	if (node.WriteAttr("BEOS:APP_SIG", B_MIME_STRING_TYPE, 0,
+			signature.c_str(), signature.size() + 1) >= 0)
+		printf("  BEOS:APP_SIG: %s\n", signature.c_str());
+	else
+		fprintf(stderr, "  failed to set signature\n");
+
+	if (node.WriteAttr("SYS:NAME", B_STRING_TYPE, 0, catalogEntry.c_str(),
+			catalogEntry.size() + 1) >= 0)
+		printf("  SYS:NAME: %s\n", catalogEntry.c_str());
+
+	return 0;
+}
+
+
+// Resolve the executable a .desktop Exec= line runs. Absolute path verbatim,
+// otherwise the first PATH-like location. Field codes (%f, %u) live past the
+// first word, which is all execBasename keeps.
+static std::string
+resolveExec(const std::string& execLine)
+{
+	std::string first = execLine.substr(0, execLine.find(' '));
+	if (first.empty())
+		return std::string();
+	// Shell/wrapper launchers (`sh -c '…'`, `env FOO=bar app`) hide the real
+	// binary past interpreter arguments we cannot parse reliably; the leaf is
+	// the interpreter, not the app. Refuse rather than stamp /usr/bin/sh.
+	std::string leaf = leafName(first);
+	if (leaf == "sh" || leaf == "bash" || leaf == "dash" || leaf == "env")
+		return std::string();
+	if (first[0] == '/')
+		return first;
+	static const char* kBinDirs[] = {"/usr/bin", "/usr/local/bin", "/bin"};
+	for (const char* dir : kBinDirs) {
+		std::string path = std::string(dir) + "/" + leafName(first);
+		if (access(path.c_str(), X_OK) == 0)
+			return path;
+	}
+	return std::string();
+}
+
+
+// Already stamped? Cheap idempotence for --all: a binary carrying BEOS:APP_SIG
+// is skipped unless --force. Not mtime-aware — a package that ships a new icon
+// under the same binary needs --force — but it keeps repeated sweeps (every
+// package install, via the trigger) close to free.
+static bool
+alreadyStamped(const std::string& binary)
+{
+	BNode node(binary.c_str());
+	if (node.InitCheck() != B_OK)
+		return false;
+	attr_info info;
+	return node.GetAttrInfo("BEOS:APP_SIG", &info) == B_OK;
+}
+
+
+// Stamp every application described under /usr/share/applications. One process
+// for the whole set: the desktop directories and icon theme are scanned once,
+// and a broken entry drops through to the next instead of aborting.
+static int
+stampAll(const Options& opts)
+{
+	static const char* kDirs[] = {
+		"/usr/share/applications",
+		"/usr/local/share/applications",
+	};
+	int stamped = 0, skipped = 0, failed = 0;
+
+	for (const char* dirPath : kDirs) {
+		DIR* dir = opendir(dirPath);
+		if (dir == NULL)
+			continue;
+		struct dirent* ent;
+		while ((ent = readdir(dir)) != NULL) {
+			std::string fname(ent->d_name);
+			if (fname.size() < 9
+				|| fname.compare(fname.size() - 8, 8, ".desktop") != 0)
+				continue;
+
+			DesktopEntry entry;
+			// Empty wantedLeaf: accept the file, then resolve its own Exec.
+			if (!parseDesktopFile(std::string(dirPath) + "/" + fname, entry,
+					""))
+				continue;
+			// Windowed applications only: skip hidden launchers, terminal
+			// utilities (fortune's `Exec=sh -c …` would otherwise stamp
+			// /usr/bin/sh) and non-Application types (links, directories).
+			if (entry.noDisplay || entry.terminal || entry.consoleOnly
+					|| !entry.isApplication)
+				continue;
+			if (entry.exec.empty())
+				continue;
+			std::string binary = resolveExec(entry.exec);
+			if (binary.empty())
+				continue;
+
+			if (!opts.force && alreadyStamped(binary)) {
+				skipped++;
+				continue;
+			}
+			printf("%s: from %s\n", binary.c_str(), entry.path.c_str());
+			if (stampBinary(binary, entry, opts) == 0)
+				stamped++;
+			else
+				failed++;
+		}
+		closedir(dir);
+	}
+
+	printf("appstamp --all: %d stamped, %d already done, %d failed\n",
+		stamped, skipped, failed);
+	// A sweep that could not stamp anything but tried is still a success for
+	// a package trigger; only signal failure if something actively broke.
+	return failed > 0 ? 1 : 0;
+}
+
+
 static void
 usage(FILE* out)
 {
 	fputs("usage: appstamp [options] <binary>\n"
+		"       appstamp --all [options]\n"
 		"Stamp BeOS attributes (icon, signature, catalog name) onto a Linux\n"
 		"binary from its freedesktop .desktop metadata.\n\n"
+		"  --all               stamp every app under /usr/share/applications\n"
+		"  --force             with --all, restamp even if already stamped\n"
 		"  --desktop <file>    use this .desktop instead of searching\n"
 		"  --signature <mime>  override the MIME signature\n"
 		"  --name <text>       override the display name\n"
@@ -440,22 +644,27 @@ usage(FILE* out)
 int
 main(int argc, char** argv)
 {
-	std::string binary, desktopPath, signature, name, hvifPath;
-	bool dryRun = false;
+	std::string binary, desktopPath;
+	Options opts;
 	bool remove = false;
+	bool all = false;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg(argv[i]);
 		if (arg == "--desktop" && i + 1 < argc)
 			desktopPath = argv[++i];
 		else if (arg == "--signature" && i + 1 < argc)
-			signature = argv[++i];
+			opts.signature = argv[++i];
 		else if (arg == "--name" && i + 1 < argc)
-			name = argv[++i];
+			opts.name = argv[++i];
 		else if (arg == "--hvif" && i + 1 < argc)
-			hvifPath = argv[++i];
+			opts.hvifPath = argv[++i];
 		else if (arg == "--dry-run")
-			dryRun = true;
+			opts.dryRun = true;
+		else if (arg == "--force")
+			opts.force = true;
+		else if (arg == "--all")
+			all = true;
 		else if (arg == "--remove")
 			remove = true;
 		else if (arg == "--help" || arg == "-h") {
@@ -469,18 +678,20 @@ main(int argc, char** argv)
 			binary = arg;
 	}
 
+	if (all)
+		return stampAll(opts);
+
 	if (binary.empty()) {
 		usage(stderr);
 		return 1;
 	}
 
-	BNode node(binary.c_str());
-	if (node.InitCheck() != B_OK) {
-		fprintf(stderr, "appstamp: cannot open %s\n", binary.c_str());
-		return 1;
-	}
-
 	if (remove) {
+		BNode node(binary.c_str());
+		if (node.InitCheck() != B_OK) {
+			fprintf(stderr, "appstamp: cannot open %s\n", binary.c_str());
+			return 1;
+		}
 		static const char* kAll[] = {kMiniAttr, kLargeAttr, kVectorAttr,
 			"BEOS:APP_SIG", "SYS:NAME"};
 		for (const char* attr : kAll) {
@@ -506,106 +717,12 @@ main(int argc, char** argv)
 
 	if (haveDesktop)
 		printf("%s: using %s\n", binary.c_str(), entry.path.c_str());
-	else if (name.empty() && hvifPath.empty()) {
+	else if (opts.name.empty() && opts.hvifPath.empty()) {
 		fprintf(stderr, "appstamp: no .desktop entry found for %s\n"
 			"(searched /usr/share/applications; use --desktop, or --name/"
 			"--hvif to stamp explicitly)\n", binary.c_str());
 		return 1;
 	}
 
-	const std::string leaf = leafName(binary);
-	if (signature.empty())
-		signature = "application/x-vnd.qt6-" + leaf;
-	if (name.empty())
-		name = entry.name.empty() ? leaf : entry.name;
-
-	// Raster icons: theme PNGs first, SVG rasterization as fallback.
-	if (!entry.icon.empty()) {
-		std::string png32, png16;
-		Image img32, img16;
-		bool have32 = false, have16 = false;
-
-		if (findThemePng(entry.icon, 32, png32) && loadPng(png32, img32)) {
-			have32 = true;
-			printf("  icon source: %s (%ux%u)\n", png32.c_str(),
-				img32.width, img32.height);
-			// A separate 16px file usually exists and looks better than a
-			// downscale of the large art; fall back to scaling img32.
-			have16 = findThemePng(entry.icon, 16, png16) && png16 != png32
-				&& loadPng(png16, img16);
-		} else if (rasterizeSvg(entry.icon, 32, img32)) {
-			have32 = true;
-			printf("  icon source: scalable SVG via rsvg-convert\n");
-			have16 = rasterizeSvg(entry.icon, 16, img16);
-		}
-
-		if (have32) {
-			writeIconAttr(node, kLargeAttr, B_LARGE_ICON_TYPE, 32, img32,
-				dryRun);
-			writeIconAttr(node, kMiniAttr, B_MINI_ICON_TYPE, 16,
-				have16 ? img16 : img32, dryRun);
-		} else {
-			fprintf(stderr, "  no usable icon for '%s'\n",
-				entry.icon.c_str());
-		}
-	}
-
-	// Optional crisp vector icon.
-	if (!hvifPath.empty()) {
-		FILE* f = fopen(hvifPath.c_str(), "rb");
-		if (f == NULL) {
-			fprintf(stderr, "appstamp: cannot read %s\n", hvifPath.c_str());
-			return 1;
-		}
-		std::vector<uint8> hvif;
-		uint8 buf[4096];
-		size_t n;
-		while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
-			hvif.insert(hvif.end(), buf, buf + n);
-		fclose(f);
-		if (hvif.size() > kMaxAttrPayload) {
-			fprintf(stderr, "appstamp: %s is %zu bytes; attribute values are"
-				" capped near 4K (single ext4 xattr, no chunking)\n",
-				hvifPath.c_str(), hvif.size());
-			return 1;
-		}
-		if (dryRun)
-			printf("  would write %s (%zu bytes)\n", kVectorAttr, hvif.size());
-		else if (node.WriteAttr(kVectorAttr, B_VECTOR_ICON_TYPE, 0,
-				hvif.data(), hvif.size()) >= 0)
-			printf("  %s: HVIF, %zu bytes\n", kVectorAttr, hvif.size());
-	}
-
-	// Signature and catalog name through the same BNode as the icons.
-	// Deliberately NOT BAppFileInfo: that needs a B_READ_WRITE BFile, which
-	// fails with ETXTBSY while the application is running — attribute writes
-	// only need write permission on the file, not its data fork open.
-	// Wire format matches BAppFileInfo (NUL included in the payload).
-	//
-	// SYS:NAME is <sig without "application/">:<context>:<string>. Deskbar
-	// resolves the label while the application is running, so FindApp(sig)
-	// succeeds via the roster and BCatalog::GetString falls back to the
-	// key itself — the untranslated name — with no catalog installed.
-	std::string sigLeaf = signature;
-	if (sigLeaf.rfind("application/", 0) == 0)
-		sigLeaf = sigLeaf.substr(strlen("application/"));
-	std::string catalogEntry = sigLeaf + ":System name:" + name;
-
-	if (dryRun) {
-		printf("  would set signature %s\n", signature.c_str());
-		printf("  would set SYS:NAME %s\n", catalogEntry.c_str());
-		return 0;
-	}
-
-	if (node.WriteAttr("BEOS:APP_SIG", B_MIME_STRING_TYPE, 0,
-			signature.c_str(), signature.size() + 1) >= 0)
-		printf("  BEOS:APP_SIG: %s\n", signature.c_str());
-	else
-		fprintf(stderr, "  failed to set signature\n");
-
-	if (node.WriteAttr("SYS:NAME", B_STRING_TYPE, 0, catalogEntry.c_str(),
-			catalogEntry.size() + 1) >= 0)
-		printf("  SYS:NAME: %s\n", catalogEntry.c_str());
-
-	return 0;
+	return stampBinary(binary, entry, opts);
 }
