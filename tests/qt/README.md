@@ -70,6 +70,10 @@ unambiguous.
 
 ## Notes
 
+- Qt6 SVG icons need `qt6-svg-plugins` (it ships `iconengines/libqsvgicon.so`
+  and `imageformats/libqsvg.so`). Debian only Recommends it from `libqt6gui6`,
+  so `--no-install-recommends` drops it and themed toolbars render text-only;
+  `--provision` installs it.
 - FeatherPad has a singleton: `pkill -9 -x featherpad` before a test run.
 - The testbed answers every command on stdout (`READY`, `DIALOG opened`,
   `CLIP get …`), so the driver never has to sleep and hope.

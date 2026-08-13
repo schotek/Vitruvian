@@ -291,8 +291,13 @@ def install_gui_helper():
 
 def provision(plugin=None):
     print("== provisioning ==")
+    # qt6-svg-plugins carries the SVG icon-engine and image-format plugins
+    # (libqsvgicon.so / libqsvg.so). Debian only Recommends it from libqt6gui6,
+    # so --no-install-recommends drops it and SVG icon themes (breeze) render as
+    # text-only toolbars. qt6-image-formats-plugins covers webp/tiff/icns icons.
     sh("DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
        "build-essential qt6-base-dev qt6-base-private-dev qt6-base-dev-tools "
+       "qt6-svg-plugins qt6-image-formats-plugins "
        "pkg-config libfreetype-dev 2>&1 | tail -1", timeout=2400)
     if plugin:
         # A plugin built during an earlier boot: copying beats rebuilding,
