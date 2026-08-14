@@ -8,6 +8,7 @@ get_base_packages() {
                 "apt-utils dialog linux-image-rt-amd64 systemd-sysv" \
                 " polkitd pkexec sudo dbus-user-session" \
                 " network-manager bluez net-tools wireless-tools curl openssh-client" \
+                " firmware-iwlwifi firmware-atheros firmware-realtek firmware-libertas firmware-brcm80211 firmware-misc-nonfree" \
                 " procps vim-tiny libbinutils openssh-server locales xdg-user-dirs ca-certificates iputils-ping xfsprogs" \
                 " fortune-mod ncurses-bin rsync" \
                 " pipewire-audio pipewire-bin wireplumber gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav" \
