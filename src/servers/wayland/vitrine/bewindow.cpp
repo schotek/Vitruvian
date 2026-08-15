@@ -587,6 +587,32 @@ private:
     BeShim* fShim;
 };
 
+/* The shim's BApplication. An EXTERNAL B_QUIT_REQUESTED (Deskbar tray
+ * "Quit", scripting) must not let the BApplication die under the running
+ * compositor — that would leave the wl event loop headless. Instead it is
+ * forwarded down the input pipe as BE_INPUT_QUIT; the compositor answers
+ * with wl_display_terminate() and the whole process exits through main()'s
+ * ordinary teardown (which ends in beshim_shutdown(); that path quits the
+ * looper via Quit() directly, never consulting QuitRequested —
+ * Looper.cpp:578). */
+class ShimApp : public BApplication {
+public:
+    ShimApp(BeShim* shim, status_t* error)
+        : BApplication(shim->signature, error), fShim(shim) {}
+
+    bool QuitRequested() override {
+        if (atomic_get(&fShim->shuttingDown) != 0)
+            return BApplication::QuitRequested();
+        BeInputEvent ev = BeInputEvent();
+        ev.type = BE_INPUT_QUIT;
+        push_event(fShim, ev);
+        return false;
+    }
+
+private:
+    BeShim* fShim;
+};
+
 /* Constructs the BApplication and runs its message loop. Construction and
  * Run() MUST happen on the same thread (see file header: BLooper's
  * construction lock is owned by the constructing thread and Run()
@@ -609,7 +635,7 @@ static int32 run_app_thread(void* arg)
     BApplication* app = nullptr;
     for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
         error = B_ERROR;
-        app = new BApplication(shim->signature, &error);
+        app = new ShimApp(shim, &error);
         if (error == B_OK)
             break;
         delete app;                     /* not Run() yet: plain delete is OK

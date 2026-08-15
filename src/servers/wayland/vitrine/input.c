@@ -607,6 +607,13 @@ handle_shim_input(int fd, uint32_t mask, void *data)
 		case BE_INPUT_CLIPBOARD:
 			vitrine_clipboard_handle_be_change(server);
 			break;
+		case BE_INPUT_QUIT:
+			/* Deskbar tray "Quit" (or scripting) asked the shim's
+			 * BApplication to quit; terminate the compositor loop so the
+			 * process exits through main()'s ordinary teardown. */
+			wlr_log(WLR_INFO, "quit requested via BApplication");
+			wl_display_terminate(server->display);
+			break;
 		default:
 			break;
 		}

@@ -44,6 +44,12 @@ enum BeInputType {
     BE_INPUT_KEY_STATES,  /* code/x/y/buttons = 16-byte physical key bitmap  */
     BE_INPUT_CLIPBOARD,   /* system clipboard changed (no payload — consumer
                            * re-reads via beshim_clipboard_get_text)         */
+    BE_INPUT_QUIT,        /* B_QUIT_REQUESTED arrived at the shim's
+                           * BApplication (Deskbar tray "Quit", `hey ...
+                           * quit`). No payload; the compositor answers with
+                           * wl_display_terminate() so the whole process
+                           * tears down through the normal main() exit path
+                           * instead of the BApplication dying on its own. */
 };
 
 /* `code` values for BE_INPUT_WINDOW. CLOSE/RESIZED/MOVED are rootless-only
