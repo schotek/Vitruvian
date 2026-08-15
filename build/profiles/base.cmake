@@ -156,6 +156,7 @@ endforeach()
 if(VITRUVIAN_ENABLE_WAYLAND)
     list(APPEND _ARRANGE_CMDS
         COMMAND cp -a "${_FLAT}/vitrine" "${_FINAL}/system/servers/Vitrine"
+        COMMAND cp -a "${_FLAT}/VitrineTray" "${_FINAL}/system/apps/VitrineTray"
     )
 endif()
 
@@ -191,7 +192,7 @@ list(APPEND _ARRANGE_CMDS
 
 set(_ATTR_DEPS ${SYSTEM_APPS} ${DESKBAR_DEMOS_TARGETS} ${DESKBAR_APPLETS} ${CORE_APPLICATIONS} ${SYSTEM_SERVERS} ${SYSTEM_PREFERENCES_TARGETS} ${TRACKER_ADDONS} ${SYSTEM_TRANSLATORS})
 if(VITRUVIAN_ENABLE_WAYLAND)
-    list(APPEND _ATTR_DEPS vitrine)
+    list(APPEND _ATTR_DEPS vitrine VitrineTray)
 endif()
 add_custom_target(apps_attrs ALL
     ${_ARRANGE_CMDS}

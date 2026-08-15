@@ -1,0 +1,9 @@
+1	czech	x-vnd.vos-VitrineTray	0
+Start Vitrine	VitrineTray		Spustit Vitrine
+Quit Vitrine	VitrineTray		Ukončit Vitrine
+Vitrine settings…	VitrineTray		Nastavení Vitrine…
+Remove from Deskbar	VitrineTray		Odebrat z Deskbaru
+Vitrine is not installed	VitrineTray		Vitrine není nainstalována
+Could not start Vitrine: %error%	VitrineTray		Vitrine se nepodařilo spustit: %error%
+Vitrine	VitrineTray		Vitrine
+OK	VitrineTray		OK

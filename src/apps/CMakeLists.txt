@@ -38,5 +38,10 @@ add_subdirectory(terminal)
 add_subdirectory(text_search)
 add_subdirectory(tracker)
 add_subdirectory(vitruvian-login)
+if(VITRUVIAN_ENABLE_WAYLAND)
+	# Deskbar tray control for the Vitrine compositor — only meaningful on
+	# builds that ship it.
+	add_subdirectory(vitrinetray)
+endif()
 add_subdirectory(vos-polkit-agent)
 add_subdirectory(workspaces)
