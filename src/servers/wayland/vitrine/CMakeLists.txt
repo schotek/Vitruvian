@@ -13,6 +13,9 @@ pkg_check_modules(WLROOTS REQUIRED IMPORTED_TARGET wlroots-0.18)
 pkg_check_modules(WAYLAND_SERVER REQUIRED IMPORTED_TARGET wayland-server)
 pkg_check_modules(XKBCOMMON REQUIRED IMPORTED_TARGET xkbcommon)
 pkg_check_modules(PIXMAN REQUIRED IMPORTED_TARGET pixman-1)
+# Direct libxcb use: xwayland.c re-grants root X access (xcb_change_hosts)
+# on every Xwayland ready. Transitive via wlroots is not a link guarantee.
+pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
 
 # wlroots' public wlr_xdg_shell.h includes the generated
 # xdg-shell-protocol.h; generate it with wayland-scanner from the sysroot's
@@ -83,6 +86,7 @@ target_link_libraries(vitrine PRIVATE
 	PkgConfig::WAYLAND_SERVER
 	PkgConfig::XKBCOMMON
 	PkgConfig::PIXMAN
+	PkgConfig::XCB
 	be
 	root
 )

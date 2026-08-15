@@ -39,6 +39,12 @@ install(FILES data/sudoers.d/vos-live
   DESTINATION /etc/sudoers.d/
   PERMISSIONS OWNER_READ GROUP_READ)
 
+# Permanent (survives install commit): env_keep so sudo-run GUI apps reach
+# the session display. Pairs with the xhost root grant in vos-session-boot.
+install(FILES data/sudoers.d/vos-gui-env
+  DESTINATION /etc/sudoers.d/
+  PERMISSIONS OWNER_READ GROUP_READ)
+
 install(FILES data/systemd/sleep.conf.d/50-vos.conf
   DESTINATION /etc/systemd/sleep.conf.d/)
 

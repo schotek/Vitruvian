@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <xcb/xproto.h>
+
 #include <wlr/xwayland/xwayland.h>
 #include <wlr/util/log.h>
 
@@ -613,12 +615,33 @@ xwm_event_tap(struct wlr_xwm *xwm, xcb_generic_event_t *event)
 	return 0;
 }
 
+/* Xwayland runs with no -auth file: its fresh access list trusts only the
+ * session uid, and the lazy server (-terminate 10) resets that list on
+ * every restart — a one-shot xhost grant from the session scripts
+ * evaporates with the first terminate. Re-grant root on every ready so
+ * sudo-run X clients (sudo xterm, ...) can connect; DISPLAY reaches them
+ * via sudoers env_keep (sudoers.d/vos-gui-env). Equivalent to
+ * `xhost +si:localuser:root`. Not a privilege grant: uid 0 already owns
+ * the machine. */
+static void
+grant_root_x_access(struct vitrine_server *server)
+{
+	xcb_connection_t *c = wlr_xwayland_get_xwm_connection(server->xwayland);
+	if (c == NULL)
+		return;
+	static const char kRoot[] = "localuser\0root"; /* SI addr: type '\0' value */
+	xcb_change_hosts(c, XCB_HOST_MODE_INSERT, XCB_FAMILY_SERVER_INTERPRETED,
+		sizeof(kRoot) - 1, (const uint8_t *)kRoot);
+	xcb_flush(c);
+}
+
 static void
 handle_ready(struct wl_listener *listener, void *data)
 {
 	struct vitrine_server *server =
 		wl_container_of(listener, server, xw_ready);
 
+	grant_root_x_access(server);
 	wlr_log(WLR_INFO, "Xwayland ready on DISPLAY=%s",
 		server->xwayland->display_name);
 }

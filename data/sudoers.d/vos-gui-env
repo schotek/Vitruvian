@@ -1,0 +1,9 @@
+# Author: Vláďa Janeček <vlada@janecek.cloud>
+#
+# Let sudo-run GUI applications reach the session display. sudo's env_reset
+# would strip these, leaving root apps with "cannot open display"; Vitrine
+# grants root X access (SI:localuser:root) on every Xwayland start
+# (src/servers/wayland/vitrine/xwayland.c), and Wayland needs the socket
+# path env only. Applies to every user; ships with the vos package (unlike
+# sudoers.d/vos-live this file is permanent).
+Defaults env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR GDK_BACKEND"
