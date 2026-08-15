@@ -20,5 +20,12 @@
 
 #define VITRINE_SIGNATURE	"application/x-vnd.vos-Vitrine"
 
+/* The Deskbar tray applet (src/apps/vitrinetray) this panel can toggle.
+ * The item name is the tray view's Name() — BDeskbar looks items up by
+ * it, not by signature. */
+#define VITRINE_TRAY_PATH	"/system/apps/VitrineTray"
+#define VITRINE_TRAY_SIGNATURE	"application/x-vnd.vos-VitrineTray"
+#define VITRINE_TRAY_ITEM_NAME	"VitrineTray"
+
 
 #endif	/* VITRINE_SETTINGS_H */

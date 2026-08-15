@@ -9,6 +9,8 @@ Not running; it will start at the next login.	Vitrine window		Neběží; spustí
 Not running.	Vitrine window		Neběží.
 Vitrine is not installed in this system image.	Vitrine window		Vitrine není v tomto obrazu systému nainstalována.
 Start now	Vitrine window		Spustit nyní
+Show a control icon in the Deskbar tray	Vitrine window		Zobrazovat ovládací ikonu v liště Deskbaru
+Changing the tray icon failed: %error%	Vitrine window		Změna ikony v liště selhala: %error%
 Could not start Vitrine: %error%	Vitrine window		Vitrine se nepodařilo spustit: %error%
 About…	Vitrine window		O aplikaci…
 Settings for Vitrine, the nested Wayland compositor that hosts Wayland and X11 applications as native windows on the VitruvianOS desktop.	Vitrine application		Nastavení kompozitoru Vitrine, který zobrazuje aplikace Wayland a X11 jako nativní okna na ploše VitruvianOS.

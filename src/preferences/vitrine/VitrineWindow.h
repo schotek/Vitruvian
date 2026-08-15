@@ -26,6 +26,7 @@ private:
 			void			_UpdateStatus();
 
 			BCheckBox*		fAutostartBox;
+			BCheckBox*		fTrayBox;
 			BStringView*	fStatus;
 			BButton*		fStartButton;
 			bool			fInstalled;

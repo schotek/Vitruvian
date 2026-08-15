@@ -15,6 +15,8 @@
 #include <Button.h>
 #include <Catalog.h>
 #include <CheckBox.h>
+#include <Deskbar.h>
+#include <Entry.h>
 #include <FindDirectory.h>
 #include <LayoutBuilder.h>
 #include <MessageRunner.h>
@@ -31,6 +33,7 @@
 static const uint32 kMsgAutostartToggled = 'atgl';
 static const uint32 kMsgStartVitrine = 'strt';
 static const uint32 kMsgRefreshStatus = 'rfsh';
+static const uint32 kMsgTrayToggled = 'tray';
 
 
 static bool
@@ -61,6 +64,13 @@ VitrineWindow::VitrineWindow()
 		B_TRANSLATE("Start Vitrine when logging in"),
 		new BMessage(kMsgAutostartToggled));
 
+	/* The Deskbar tray icon (src/apps/vitrinetray) — the persistent handle
+	 * for a nested server that deliberately has no entry among the
+	 * applications. */
+	fTrayBox = new BCheckBox("tray",
+		B_TRANSLATE("Show a control icon in the Deskbar tray"),
+		new BMessage(kMsgTrayToggled));
+
 	fStatus = new BStringView("status", "");
 
 	/* Manual launch for the autostart-off case: the roster resolves the
@@ -83,6 +93,7 @@ VitrineWindow::VitrineWindow()
 		.Add(header)
 		.Add(blurb)
 		.Add(fAutostartBox)
+		.Add(fTrayBox)
 		.Add(fStatus)
 		.AddGlue()
 		.AddGroup(B_HORIZONTAL)
@@ -92,8 +103,12 @@ VitrineWindow::VitrineWindow()
 		.End();
 
 	fAutostartBox->SetValue(_ReadAutostart() ? B_CONTROL_ON : B_CONTROL_OFF);
+	fTrayBox->SetValue(BDeskbar().HasItem(VITRINE_TRAY_ITEM_NAME)
+		? B_CONTROL_ON : B_CONTROL_OFF);
 	if (!fInstalled)
 		fAutostartBox->SetEnabled(false);
+	if (access(VITRINE_TRAY_PATH, X_OK) != 0)
+		fTrayBox->SetEnabled(false);
 	_UpdateStatus();
 
 	CenterOnScreen();
@@ -136,6 +151,34 @@ VitrineWindow::MessageReceived(BMessage* message)
 		case kMsgRefreshStatus:
 			_UpdateStatus();
 			break;
+
+		case kMsgTrayToggled:
+		{
+			/* Toggling from OUR team is safe inline — the deadlock trap is
+			 * only RemoveItem() called from inside Deskbar itself (see the
+			 * tray view). AddItem must use the entry_ref variant: it is the
+			 * only one Deskbar persists across restarts. */
+			BDeskbar deskbar;
+			status_t status;
+			if (fTrayBox->Value() == B_CONTROL_ON) {
+				entry_ref ref;
+				status = be_roster->FindApp(VITRINE_TRAY_SIGNATURE, &ref);
+				if (status == B_OK)
+					status = deskbar.AddItem(&ref);
+			} else {
+				status = deskbar.RemoveItem(VITRINE_TRAY_ITEM_NAME);
+			}
+			if (status != B_OK) {
+				fTrayBox->SetValue(
+					deskbar.HasItem(VITRINE_TRAY_ITEM_NAME)
+						? B_CONTROL_ON : B_CONTROL_OFF);
+				BString text(
+					B_TRANSLATE("Changing the tray icon failed: %error%"));
+				text.ReplaceFirst("%error%", strerror(status));
+				fStatus->SetText(text);
+			}
+			break;
+		}
 
 		default:
 			BWindow::MessageReceived(message);
