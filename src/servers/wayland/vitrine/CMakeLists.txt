@@ -52,10 +52,14 @@ add_executable(vitrine
 	popup.c
 	xwayland.c
 	clipboard.c
+	winhost.c
 	bewindow.cpp
 	bewindow_win.cpp
 	"${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.h"
 )
+
+# Per-window helper process (phase H1).
+add_subdirectory(host)
 
 target_include_directories(vitrine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 

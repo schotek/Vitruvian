@@ -24,6 +24,7 @@
 #include <wlr/version.h>
 
 #include "vitrine.h"
+#include "winhost.h"
 
 #define VITRINE_VERSION "0.2.0"
 
@@ -160,6 +161,12 @@ main(int argc, char** argv)
 
 	vitrine_input_init(&server);
 
+	/* Per-window helper (H1, gated by VITRINE_WINHOST=1): guest windows
+	 * hosted in a separate team so they can carry their own Deskbar
+	 * entries. Off by default — the in-process beshim path stays the
+	 * first-class fallback. */
+	winhost_init(&server);
+
 	/* CLIPBOARD ⇄ BClipboard text bridge (F7). */
 	vitrine_clipboard_init(&server);
 
@@ -201,6 +208,7 @@ main(int argc, char** argv)
 	wlr_renderer_destroy(server.renderer);
 	wlr_backend_destroy(&server.backend->base);
 	wl_display_destroy(server.display);
+	winhost_finish(&server);
 	beshim_shutdown(server.shim);
 	return 0;
 

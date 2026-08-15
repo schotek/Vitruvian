@@ -19,6 +19,7 @@
 #include <wlr/util/log.h>
 
 #include "vitrine.h"
+#include "winhost.h"
 
 static struct vitrine_output *
 output_from_wlr(struct wlr_output *wlr_output)
@@ -70,12 +71,21 @@ output_handle_frame(struct wl_listener *listener, void *data)
 static uint8_t *
 scanout_bits(struct vitrine_output *output, int *stride)
 {
+	if (output->hosted != NULL) {
+		if (stride != NULL)
+			*stride = output->hosted->stride;
+		return output->hosted->bits;
+	}
 	return beshim_window_bits(output->window, stride);
 }
 
 static void
 scanout_blit(struct vitrine_output *output, int x, int y, int w, int h)
 {
+	if (output->hosted != NULL) {
+		winhost_send_damage(output->hosted, x, y, w, h);
+		return;
+	}
 	beshim_blit(output->window, x, y, w, h);
 }
 
@@ -119,9 +129,10 @@ output_commit(struct wlr_output *wlr_output,
 	struct vitrine_output *output = output_from_wlr(wlr_output);
 
 	/* Enable/mode-only commits carry no buffer — nothing to display.
-	 * Virtual (metadata-only) outputs have no window to blit into. */
+	 * Virtual (metadata-only) outputs have neither a window nor a hosted
+	 * proxy to blit into. */
 	if (!(state->committed & WLR_OUTPUT_STATE_BUFFER)
-			|| output->window == NULL)
+			|| (output->window == NULL && output->hosted == NULL))
 		return true;
 
 	void *data;
@@ -193,6 +204,8 @@ output_destroy(struct wlr_output *wlr_output)
 		wl_event_source_remove(output->frame_timer);
 	if (output->window != NULL)
 		beshim_destroy_window(output->window);
+	if (output->hosted != NULL)
+		winhost_destroy_window(output->hosted);
 	free(output);
 }
 
@@ -278,6 +291,17 @@ vitrine_output_create_from_window(struct vitrine_server *server,
 	BeWindow *window, int width, int height)
 {
 	return output_create_common(server, window, width, height);
+}
+
+struct vitrine_output *
+vitrine_output_create_from_hosted(struct vitrine_server *server,
+	struct vitrine_hosted_window *hosted, int width, int height)
+{
+	struct vitrine_output *output = output_create_common(server, NULL,
+		width, height);
+	if (output != NULL)
+		output->hosted = hosted;
+	return output;
 }
 
 struct vitrine_output *

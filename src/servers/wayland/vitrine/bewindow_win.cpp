@@ -496,19 +496,33 @@ BeWindow* bewin_create_x(BeEventSink* sink, const BeWindowSpec* spec)
     if (!sink || !spec || spec->w <= 0 || spec->h <= 0)
         return nullptr;
 
+    BRect content(0, 0, spec->w - 1, spec->h - 1);
+    /* Same flat B_RGB32 shadow framebuffer as the rootful path. */
+    BBitmap* bitmap = new BBitmap(content, B_RGB32, false);
+    if (bitmap->InitCheck() != B_OK || bitmap->Bits() == nullptr) {
+        delete bitmap;
+        return nullptr;
+    }
+    return bewin_create_x_with_bitmap(sink, spec, bitmap);
+}
+
+/* Assembly half of bewin_create_x, taking a caller-supplied framebuffer —
+ * the per-window helper wraps a BBitmap around a cloned nexus area and
+ * hands it in here. Ownership transfers: the BeWindow deletes it. */
+BeWindow* bewin_create_x_with_bitmap(BeEventSink* sink,
+                                     const BeWindowSpec* spec,
+                                     BBitmap* bitmap)
+{
+    if (!sink || !spec || !bitmap)
+        return nullptr;
+
     BeWindow* be = new BeWindow();
     be->sink = sink;
     be->width = spec->w;
     be->height = spec->h;
+    be->bitmap = bitmap;
 
     BRect content(0, 0, spec->w - 1, spec->h - 1);
-    /* Same flat B_RGB32 shadow framebuffer as the rootful path. */
-    be->bitmap = new BBitmap(content, B_RGB32, false);
-    if (be->bitmap->InitCheck() != B_OK || be->bitmap->Bits() == nullptr) {
-        delete be->bitmap;
-        delete be;
-        return nullptr;
-    }
 
     /* Look/feel/flags per the bewindow.h contract; all constants verified
      * in headers/os/interface/Window.h:36-70. */

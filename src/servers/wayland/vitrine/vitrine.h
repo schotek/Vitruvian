@@ -31,6 +31,10 @@
 struct wlr_xwayland;
 struct wlr_xwayland_surface;
 
+/* From winhost.h (per-window helper, H1). */
+struct winhost;
+struct vitrine_hosted_window;
+
 struct vitrine_input {
 	struct vitrine_server *server;
 
@@ -75,6 +79,8 @@ struct vitrine_server {
 	struct wl_display *display;
 	struct wl_event_loop *event_loop;
 	BeShim *shim;
+	struct winhost *winhost;                /* per-window helper (H1 gate);
+	                                         * NULL when disabled */
 	bool rootful;
 
 	struct vitrine_backend *backend;
@@ -184,6 +190,9 @@ struct vitrine_output {
 	struct wl_list link;
 
 	BeWindow *window;
+	struct vitrine_hosted_window *hosted;   /* helper-hosted scanout (H1);
+	                                         * exactly one of window/hosted
+	                                         * is set for rootless outputs */
 	struct wlr_scene_output *scene_output;
 
 	/* Frame pacing: a wl_event_loop timer per output, armed on backend
@@ -220,6 +229,9 @@ struct vitrine_rootless_window {
 
 	int win_id;                             /* BeInputEvent.screen token */
 	BeWindow *window;                       /* NULL after teardown starts */
+	struct vitrine_hosted_window *hosted;   /* helper-hosted (H1 gate);
+	                                         * owned by the output, NULLed
+	                                         * with `window` at teardown */
 	struct vitrine_output *output;
 	struct wlr_scene *scene;
 	struct wlr_scene_tree *surface_tree;
@@ -245,6 +257,9 @@ struct vitrine_backend *vitrine_backend_create(struct vitrine_server *server);
 /* output.c */
 struct vitrine_output *vitrine_output_create(struct vitrine_server *server,
 	int width, int height, const char *title);
+struct vitrine_output *vitrine_output_create_from_hosted(
+	struct vitrine_server *server, struct vitrine_hosted_window *hosted,
+	int width, int height);
 struct vitrine_output *vitrine_output_create_from_window(
 	struct vitrine_server *server, BeWindow *window, int width, int height);
 struct vitrine_output *vitrine_output_create_virtual(

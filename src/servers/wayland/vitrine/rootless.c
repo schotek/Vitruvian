@@ -22,6 +22,7 @@
 #include <wlr/util/log.h>
 
 #include "vitrine.h"
+#include "winhost.h"
 
 /* Placement policy carried over from the PoC (vitruvian_rootless.c):
  * center the first window, subsequent ones cascade through 8 slots
@@ -100,6 +101,7 @@ schedule_teardown(struct vitrine_rootless_window *window)
 		return;
 	window->teardown_scheduled = true;
 	window->window = NULL; /* input events with this win_id now drop */
+	window->hosted = NULL; /* owned by the output, destroyed with it */
 	if (window->toplevel != NULL) {
 		window->toplevel->rootless = NULL;
 		window->toplevel = NULL;
@@ -187,6 +189,17 @@ raise_children_above(struct vitrine_rootless_window *window, int depth)
 static void
 apply_size(struct vitrine_rootless_window *window, int w, int h)
 {
+	if (window->hosted != NULL) {
+		/* H1: the shared-area resize handshake (new area + swap ack)
+		 * is phase H2; until then hosted windows keep their map size. */
+		static bool warned;
+		if (!warned) {
+			wlr_log(WLR_INFO,
+				"winhost: resize deferred to H2, keeping size");
+			warned = true;
+		}
+		return;
+	}
 	if (w <= 0 || h <= 0 || window->window == NULL)
 		return;
 	if (w == window->width && h == window->height)
@@ -303,18 +316,38 @@ rootless_map(struct vitrine_toplevel *toplevel)
 		.win_id = window->win_id,
 		.borderless = 0,	/* policy: always the BeOS tab */
 	};
-	window->window = beshim_create_xwindow(server->shim, &spec);
-	if (window->window == NULL) {
-		free(window);
-		return;
-	}
+	/* H1 gate: Wayland toplevels can be hosted in the helper process
+	 * (own Deskbar team) instead of an in-process BeOS window. Exactly
+	 * one of window/hosted ends up set; the beshim_* calls below all
+	 * no-op on a NULL BeWindow, and apply_size() skips hosted windows
+	 * (resize handshake is H2). */
+	if (winhost_enabled(server)) {
+		window->hosted = winhost_create_window(server, &spec);
+		if (window->hosted == NULL) {
+			free(window);
+			return;
+		}
+		window->output = vitrine_output_create_from_hosted(server,
+			window->hosted, geo.width, geo.height);
+		if (window->output == NULL) {
+			winhost_destroy_window(window->hosted);
+			free(window);
+			return;
+		}
+	} else {
+		window->window = beshim_create_xwindow(server->shim, &spec);
+		if (window->window == NULL) {
+			free(window);
+			return;
+		}
 
-	window->output = vitrine_output_create_from_window(server,
-		window->window, geo.width, geo.height);
-	if (window->output == NULL) {
-		beshim_destroy_window(window->window);
-		free(window);
-		return;
+		window->output = vitrine_output_create_from_window(server,
+			window->window, geo.width, geo.height);
+		if (window->output == NULL) {
+			beshim_destroy_window(window->window);
+			free(window);
+			return;
+		}
 	}
 
 	window->scene = wlr_scene_create();

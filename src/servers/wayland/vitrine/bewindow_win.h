@@ -35,6 +35,9 @@ void bewin_push_event(BeEventSink* sink, const BeInputEvent& ev);
 BeWindow* bewin_create_screen(BeEventSink* sink, int w, int h,
 	const char* title);
 BeWindow* bewin_create_x(BeEventSink* sink, const BeWindowSpec* spec);
+class BBitmap;
+BeWindow* bewin_create_x_with_bitmap(BeEventSink* sink,
+	const BeWindowSpec* spec, BBitmap* bitmap);
 void  bewin_set_title(BeWindow* win, const char* title);
 void  bewin_move_window(BeWindow* win, int x, int y);
 void* bewin_window_bits(BeWindow* win, int* bytes_per_row);
