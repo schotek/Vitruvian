@@ -61,6 +61,24 @@ output_handle_frame(struct wl_listener *listener, void *data)
 	wlr_scene_output_send_frame_done(output->scene_output, &now);
 }
 
+/* Scanout seam (H0): the two spots where pixels leave the compositor for
+ * the BeOS window. Today the destination is always the in-process beshim
+ * window; the per-window helper (H1+) adds a second branch here — a shared
+ * nexus area written in place of Bits() plus a WIN_DAMAGE message in place
+ * of the blit call. Keeping the branch point in exactly two helpers means
+ * output_commit stays oblivious to who hosts the window. */
+static uint8_t *
+scanout_bits(struct vitrine_output *output, int *stride)
+{
+	return beshim_window_bits(output->window, stride);
+}
+
+static void
+scanout_blit(struct vitrine_output *output, int x, int y, int w, int h)
+{
+	beshim_blit(output->window, x, y, w, h);
+}
+
 static void
 blit_box(struct vitrine_output *output, const uint8_t *src, size_t src_stride,
 	uint8_t *dst, size_t dst_stride, int width, int height,
@@ -91,7 +109,7 @@ blit_box(struct vitrine_output *output, const uint8_t *src, size_t src_stride,
 		d += dst_stride;
 	}
 
-	beshim_blit(output->window, x1, y1, x2 - x1, y2 - y1);
+	scanout_blit(output, x1, y1, x2 - x1, y2 - y1);
 }
 
 static bool
@@ -124,7 +142,7 @@ output_commit(struct wlr_output *wlr_output,
 	}
 
 	int dst_stride = 0;
-	uint8_t *dst = beshim_window_bits(output->window, &dst_stride);
+	uint8_t *dst = scanout_bits(output, &dst_stride);
 	if (dst == NULL) {
 		wlr_buffer_end_data_ptr_access(state->buffer);
 		return false;

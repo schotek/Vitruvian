@@ -577,14 +577,16 @@ handle_window_event(struct vitrine_input *input, const BeInputEvent *ev)
 
 /* ---- shim pipe drain ---- */
 
-static int
-handle_shim_input(int fd, uint32_t mask, void *data)
+/* One BeInputEvent into the compositor. Exported (H0 seam): today the only
+ * caller is the shim-pipe drain below; the per-window helper sockets (H1+)
+ * feed the very same records through this entry, so everything downstream —
+ * win_id routing, popup snoops, focus and stuck-key defenses — is shared. */
+void
+vitrine_input_dispatch(struct vitrine_server *server, const BeInputEvent *evp)
 {
-	struct vitrine_server *server = data;
 	struct vitrine_input *input = &server->input;
-
-	BeInputEvent ev;
-	while (beshim_next_event(server->shim, &ev)) {
+	BeInputEvent ev = *evp;
+	{
 		switch (ev.type) {
 		case BE_INPUT_KEY:
 			handle_key(input, &ev);
@@ -618,6 +620,16 @@ handle_shim_input(int fd, uint32_t mask, void *data)
 			break;
 		}
 	}
+}
+
+static int
+handle_shim_input(int fd, uint32_t mask, void *data)
+{
+	struct vitrine_server *server = data;
+
+	BeInputEvent ev;
+	while (beshim_next_event(server->shim, &ev))
+		vitrine_input_dispatch(server, &ev);
 	return 0;
 }
 

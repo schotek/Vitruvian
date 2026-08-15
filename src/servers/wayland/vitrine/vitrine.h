@@ -257,6 +257,10 @@ void vitrine_shell_init(struct vitrine_server *server);
 
 /* input.c */
 void vitrine_input_init(struct vitrine_server *server);
+/* One BeInputEvent into the compositor (H0 seam): the shim-pipe drain and,
+ * from H1 on, the per-window helper sockets all feed records through here. */
+void vitrine_input_dispatch(struct vitrine_server *server,
+	const BeInputEvent *ev);
 void vitrine_focus_surface(struct vitrine_server *server,
 	struct wlr_surface *surface);
 
