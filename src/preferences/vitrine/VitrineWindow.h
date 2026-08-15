@@ -7,6 +7,7 @@
 
 #include <Window.h>
 
+class BButton;
 class BCheckBox;
 class BStringView;
 
@@ -26,6 +27,7 @@ private:
 
 			BCheckBox*		fAutostartBox;
 			BStringView*	fStatus;
+			BButton*		fStartButton;
 			bool			fInstalled;
 };
 

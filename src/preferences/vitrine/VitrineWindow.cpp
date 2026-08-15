@@ -17,8 +17,10 @@
 #include <CheckBox.h>
 #include <FindDirectory.h>
 #include <LayoutBuilder.h>
+#include <MessageRunner.h>
 #include <Path.h>
 #include <Roster.h>
+#include <String.h>
 #include <StringView.h>
 
 
@@ -27,6 +29,8 @@
 
 
 static const uint32 kMsgAutostartToggled = 'atgl';
+static const uint32 kMsgStartVitrine = 'strt';
+static const uint32 kMsgRefreshStatus = 'rfsh';
 
 
 static bool
@@ -59,6 +63,13 @@ VitrineWindow::VitrineWindow()
 
 	fStatus = new BStringView("status", "");
 
+	/* Manual launch for the autostart-off case: the roster resolves the
+	 * signature (it scans /system/servers too) and B_EXCLUSIVE_LAUNCH in
+	 * the rdef makes a second start a no-op, so the button is safe to
+	 * press at any time. */
+	fStartButton = new BButton("start", B_TRANSLATE("Start now"),
+		new BMessage(kMsgStartVitrine));
+
 	/* B_ABOUT_REQUESTED goes to the application, which owns the panel (see
 	 * VitrineApp::AboutRequested) — the same handler the Deskbar's About
 	 * item reaches. */
@@ -75,6 +86,7 @@ VitrineWindow::VitrineWindow()
 		.Add(fStatus)
 		.AddGlue()
 		.AddGroup(B_HORIZONTAL)
+			.Add(fStartButton)
 			.AddGlue()
 			.Add(aboutButton)
 		.End();
@@ -100,6 +112,28 @@ VitrineWindow::MessageReceived(BMessage* message)
 	switch (message->what) {
 		case kMsgAutostartToggled:
 			_WriteAutostart(fAutostartBox->Value() == B_CONTROL_ON);
+			_UpdateStatus();
+			break;
+
+		case kMsgStartVitrine:
+		{
+			status_t status = be_roster->Launch(VITRINE_SIGNATURE);
+			if (status != B_OK && status != B_ALREADY_RUNNING) {
+				BString text(B_TRANSLATE("Could not start Vitrine: %error%"));
+				text.ReplaceFirst("%error%", strerror(status));
+				fStatus->SetText(text);
+				break;
+			}
+			_UpdateStatus();
+			/* The roster registration lags the launch by a moment, so
+			 * IsRunning() can still say "not running" — refresh once more
+			 * shortly. Fire-and-forget one-shot; no cleanup to track. */
+			BMessageRunner::StartSending(BMessenger(this),
+				new BMessage(kMsgRefreshStatus), 2000000, 1);
+			break;
+		}
+
+		case kMsgRefreshStatus:
 			_UpdateStatus();
 			break;
 
@@ -183,10 +217,12 @@ VitrineWindow::_UpdateStatus()
 	if (!fInstalled) {
 		fStatus->SetText(
 			B_TRANSLATE("Vitrine is not installed in this system image."));
+		fStartButton->SetEnabled(false);
 		return;
 	}
 
 	bool running = be_roster->IsRunning(VITRINE_SIGNATURE);
+	fStartButton->SetEnabled(!running);
 	if (running) {
 		fStatus->SetText(fAutostartBox->Value() == B_CONTROL_ON
 			? B_TRANSLATE("Currently running.")
