@@ -104,21 +104,3 @@ install(TARGETS vitrine
 		GROUP_READ GROUP_EXECUTE
 		WORLD_READ WORLD_EXECUTE
 )
-
-# Expose the compositor among the applications so the user can start it by
-# hand when autostart is off: a Deskbar menu entry and a /system/apps entry,
-# both symlinks resolved by BNavMenu/Tracker (same pattern as the Preferences
-# menu, which also points outside /system/apps). Living in this file, the
-# links exist only on VITRUVIAN_ENABLE_WAYLAND builds — no dangling entry
-# otherwise. Double launch is already refused by the rdef's
-# B_EXCLUSIVE_LAUNCH.
-install(CODE "
-	file(MAKE_DIRECTORY \"\$ENV{DESTDIR}/system/data/deskbar/menu/Applications\")
-	file(CREATE_LINK \"/system/servers/Vitrine\"
-		\"\$ENV{DESTDIR}/system/data/deskbar/menu/Applications/Vitrine\"
-		SYMBOLIC)
-	file(MAKE_DIRECTORY \"\$ENV{DESTDIR}/system/apps\")
-	file(CREATE_LINK \"/system/servers/Vitrine\"
-		\"\$ENV{DESTDIR}/system/apps/Vitrine\"
-		SYMBOLIC)
-")
