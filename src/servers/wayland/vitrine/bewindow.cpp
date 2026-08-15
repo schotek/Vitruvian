@@ -616,6 +616,14 @@ static int32 run_app_thread(void* arg)
                                          * (BLooper::Quit handles !fRunCalled,
                                          * but we never registered windows) */
         app = nullptr;
+        if (error == B_ALREADY_RUNNING) {
+            /* B_EXCLUSIVE_LAUNCH in the rdef: the registrar refuses a
+             * second instance and will keep refusing — fail fast instead
+             * of burning the 10 s retry budget on it. */
+            fprintf(stderr,
+                "vitrine: another instance is already running\n");
+            break;
+        }
         if (attempt == 0) {
             fprintf(stderr, "vitrine: app_server not ready (%s), "
                 "retrying for up to 10 s\n", strerror(error));

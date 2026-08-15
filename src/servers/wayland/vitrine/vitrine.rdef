@@ -4,10 +4,12 @@
  * Resources for the Vitrine nested Wayland compositor.
  *
  * These are embedded into the binary by xres (CompileRdef/LinkRdefs in
- * CMakeLists.txt). BAppFileInfo reads B_USE_BOTH_LOCATIONS by default
- * (src/kits/storage/AppFileInfo.cpp:79), so the in-file resources are
- * enough — Vitrine deliberately stays out of SYSTEM_SERVERS (and thus out
- * of the apps_attrs xattr tarball), because that list is unconditional
+ * CMakeLists.txt) — that alone covers the RUNNING team's Deskbar entry
+ * (BAppFileInfo reads B_USE_BOTH_LOCATIONS, AppFileInfo.cpp:79). Tracker
+ * and the Deskbar menu read the ON-DISK icon from the BEOS:ICON xattr
+ * instead, so the rdef is also staged (STAGING) into the apps_attrs
+ * tarball via the conditional Vitrine entry in build/profiles/base.cmake.
+ * Vitrine still stays out of SYSTEM_SERVERS: that list is unconditional
  * while Vitrine only exists in --enable-wayland builds.
  *
  * NOT B_BACKGROUND_APP: unlike app_server or input_server, Vitrine hosts
@@ -35,8 +37,10 @@ resource app_version {
 
 /* PLACEHOLDER ARTWORK: this is the in-tree Screen preferences icon (a
  * monitor), reused verbatim because it reads as "display surface" — which
- * is what Vitrine is. Replace it with dedicated artwork when there is any;
- * until then Vitrine and Screen share a look in the Deskbar. */
+ * is what Vitrine is. Replace it with dedicated artwork when there is any
+ * (proper BeOS-style 3D/perspective art, i.e. Icon-O-Matic work — a flat
+ * programmatic draft was tried 2026-08-15 and rejected on style); until
+ * then Vitrine and Screen share a look in the Deskbar. */
 resource vector_icon {
 	$"6E6369660B03010000020016023CC7EE389BC0BA16573E39B04977C842ADC700"
 	$"FFFFD3020006023C529D3753A2B8966F3D9D084B6044496AAF00474747FFA5A0"

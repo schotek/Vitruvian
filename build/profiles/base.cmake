@@ -146,6 +146,19 @@ foreach(_server ${SYSTEM_SERVERS})
     )
 endforeach()
 
+# Vitrine only exists on --enable-wayland builds, so it cannot join the
+# unconditional SYSTEM_SERVERS list; append its attrs entry here instead.
+# Staging file carries the cmake target name (vitrine), the installed
+# binary is Vitrine — the same target/output split SYSTEM_PREFERENCES
+# resolves with parallel lists. Without this entry Tracker and the Deskbar
+# menu show the generic icon: they read BEOS:ICON from the xattr, not from
+# the in-binary resources.
+if(VITRUVIAN_ENABLE_WAYLAND)
+    list(APPEND _ARRANGE_CMDS
+        COMMAND cp -a "${_FLAT}/vitrine" "${_FINAL}/system/servers/Vitrine"
+    )
+endif()
+
 # SYSTEM_PREFERENCES_TARGETS and SYSTEM_PREFERENCES are parallel lists:
 # targets have cmake-unique names; SYSTEM_PREFERENCES has the installed output names.
 # (Deskbar_prefs/Tracker_prefs clash with the app targets of the same name in Jam,
@@ -176,9 +189,13 @@ list(APPEND _ARRANGE_CMDS
     COMMAND tar --xattrs -cf "${_TAR}" -C "${_FINAL}" .
 )
 
+set(_ATTR_DEPS ${SYSTEM_APPS} ${DESKBAR_DEMOS_TARGETS} ${DESKBAR_APPLETS} ${CORE_APPLICATIONS} ${SYSTEM_SERVERS} ${SYSTEM_PREFERENCES_TARGETS} ${TRACKER_ADDONS} ${SYSTEM_TRANSLATORS})
+if(VITRUVIAN_ENABLE_WAYLAND)
+    list(APPEND _ATTR_DEPS vitrine)
+endif()
 add_custom_target(apps_attrs ALL
     ${_ARRANGE_CMDS}
-    DEPENDS ${SYSTEM_APPS} ${DESKBAR_DEMOS_TARGETS} ${DESKBAR_APPLETS} ${CORE_APPLICATIONS} ${SYSTEM_SERVERS} ${SYSTEM_PREFERENCES_TARGETS} ${TRACKER_ADDONS} ${SYSTEM_TRANSLATORS}
+    DEPENDS ${_ATTR_DEPS}
     COMMENT "Packaging app attrs"
 )
 
