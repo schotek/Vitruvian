@@ -116,7 +116,7 @@ VitrineWindow::VitrineWindow()
 			.Add(aboutButton)
 		.End();
 
-	fAutostartBox->SetValue(_ReadBool("autostart", true)
+	fAutostartBox->SetValue(_ReadBool("autostart", false)
 		? B_CONTROL_ON : B_CONTROL_OFF);
 	fSeparateBox->SetValue(_ReadBool("separate_windows", false)
 		? B_CONTROL_ON : B_CONTROL_OFF);
@@ -256,9 +256,9 @@ VitrineWindow::QuitRequested()
 
 
 /*!	Reads one boolean key. Anything unparsable — including a missing
-	file — means the caller's default (autostart defaults on: an image
-	that ships Vitrine starts it unless the user opted out;
-	separate_windows defaults off: the in-process mode is the baseline).
+	file — means the caller's default. Both keys default OFF: Vitrine
+	waits as the greyed tray icon until the user starts it (or opts into
+	the autostart here), and the in-process window mode is the baseline.
 */
 bool
 VitrineWindow::_ReadBool(const char* key, bool defaultValue) const

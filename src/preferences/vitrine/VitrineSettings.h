@@ -5,7 +5,9 @@
  * plain "key = value" text — the same shape the input server already uses
  * for ~/config/settings/input/xkb_layout — so janus (C), vos-session-boot
  * (shell) and this preferences panel (C++) can all read it without a
- * parser library. A missing file means "defaults", i.e. autostart on.
+ * parser library. A missing file means "defaults": everything off —
+ * Vitrine waits as the greyed Deskbar tray icon until started from there
+ * or opted into the autostart here.
  */
 #ifndef VITRINE_SETTINGS_H
 #define VITRINE_SETTINGS_H

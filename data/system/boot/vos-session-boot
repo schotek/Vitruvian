@@ -27,15 +27,16 @@ LAUNCH=/system/servers/janus_launch
 
 # Nested Wayland compositor (optional component — only --enable-wayland
 # images ship it). No ordering wait needed: the binary retries the
-# app_server shim internally until the desktop is up. The user can opt out
-# in the Vitrine preferences panel, which writes ~/config/settings/vitrine;
-# a missing or unparsable file means the default, autostart on.
-vitrine_autostart=yes
+# app_server shim internally until the desktop is up. The user opts IN via
+# the Vitrine preferences panel, which writes ~/config/settings/vitrine; a
+# missing or unparsable file means the default, autostart OFF — Vitrine
+# waits as the greyed tray icon until started from there.
+vitrine_autostart=no
 vitrine_cfg="${HOME:-/root}/config/settings/vitrine"
 if [ -r "$vitrine_cfg" ]; then
 	case "$(sed -n 's/^[[:space:]]*autostart[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' \
 			"$vitrine_cfg" | tail -1 | tr 'A-Z' 'a-z')" in
-		false|no|off|0) vitrine_autostart=no ;;
+		true|yes|on|1) vitrine_autostart=yes ;;
 	esac
 fi
 

@@ -1109,23 +1109,25 @@ kill_pre_auth_chain()
 /*!	Reads the user's Vitrine autostart preference (written by the Vitrine
 	preferences panel, src/preferences/vitrine). Plain "key = value" text,
 	same shape as the input server's xkb_layout. Anything unreadable or
-	unparsable means the default: an image that ships Vitrine starts it
-	unless the user opted out. Called as root before the privilege drop —
-	the file belongs to the session user, which root can read.
+	unparsable means the default, which is OFF: Vitrine sits as the greyed
+	tray icon until the user starts it from there or opts into the
+	autostart in the preferences panel. Called as root before the
+	privilege drop — the file belongs to the session user, which root can
+	read.
 */
 static bool
 vitrine_autostart_enabled()
 {
 	if (sUserHome[0] == '\0')
-		return true;
+		return false;
 
 	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/config/settings/vitrine", sUserHome);
 	FILE* file = fopen(path, "r");
 	if (file == NULL)
-		return true;
+		return false;
 
-	bool enabled = true;
+	bool enabled = false;
 	char line[256];
 	while (fgets(line, sizeof(line), file) != NULL) {
 		char* p = line;
@@ -1141,10 +1143,10 @@ vitrine_autostart_enabled()
 		p++;
 		while (isspace((unsigned char)*p))
 			p++;
-		enabled = !(strncasecmp(p, "false", 5) == 0
-			|| strncasecmp(p, "no", 2) == 0
-			|| strncasecmp(p, "off", 3) == 0
-			|| *p == '0');
+		enabled = strncasecmp(p, "true", 4) == 0
+			|| strncasecmp(p, "yes", 3) == 0
+			|| strncasecmp(p, "on", 2) == 0
+			|| *p == '1';
 	}
 	fclose(file);
 	return enabled;
