@@ -25,6 +25,14 @@
 /* The per-window helper binary; "Show windows separately" needs it. */
 #define VITRINE_WINHOST_PATH	"/system/servers/vitrine_window_host"
 
+/* GTK theming of guest applications: the `gtk_theme` key names the theme
+ * janus and profile.d/xdisplay.sh export as GTK_THEME at login; absent =
+ * the vendored default. Real GTK3 themes ship <name>/gtk-3.0/gtk.css
+ * under the system dir — entries without it (Default, Emacs) are
+ * key-binding themes and must not be offered. */
+#define GTK_THEME_DEFAULT	"BeOS"
+#define GTK_THEMES_SYSTEM_DIR	"/usr/share/themes"
+
 /* The Deskbar tray applet (src/apps/vitrinetray) this panel can toggle.
  * The item name is the tray view's Name() — BDeskbar looks items up by
  * it, not by signature. */

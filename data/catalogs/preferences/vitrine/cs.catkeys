@@ -11,6 +11,12 @@ Vitrine is not installed in this system image.	Vitrine window		Vitrine není v t
 Start now	Vitrine window		Spustit nyní
 Show a control icon in the Deskbar tray	Vitrine window		Zobrazovat ovládací ikonu v liště Deskbaru
 Show windows of applications separately	Vitrine window		Zobrazovat okna aplikací samostatně
+Status	Vitrine window		Stav
+Behavior	Vitrine window		Chování
+Appearance	Vitrine window		Vzhled
+GTK theme:	Vitrine window		Téma GTK:
+BeOS (default)	Vitrine window		BeOS (výchozí)
+The change takes effect at the next login.	Vitrine window		Změna se projeví při příštím přihlášení.
 Restart Vitrine	Vitrine window		Restartovat Vitrine
 The change takes effect the next time Vitrine starts. Restart it now?\n\nWindows of running Wayland and X11 applications will close.	Vitrine window		Změna se projeví při příštím spuštění Vitrine. Restartovat nyní?\n\nOkna běžících aplikací Wayland a X11 se zavřou.
 Later	Vitrine window		Později

@@ -11,7 +11,18 @@ if [ -x /system/servers/Vitrine ]; then
 	export DISPLAY="${DISPLAY:-:0}"
 	export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 	export GDK_BACKEND="${GDK_BACKEND:-wayland,x11}"
-	export GTK_THEME="${GTK_THEME:-BeOS}"
+	# The user's theme pick from the Vitrine preferences panel; missing
+	# key/file = the vendored BeOS look (same reader janus applies for
+	# Tracker-launched applications).
+	if [ -z "$GTK_THEME" ]; then
+		vitrine_theme="$(sed -n \
+			's/^[[:space:]]*gtk_theme[[:space:]]*=[[:space:]]*//p' \
+			"${HOME:-/root}/config/settings/vitrine" 2>/dev/null \
+			| tail -1 | sed 's/[[:space:]]*$//')"
+		GTK_THEME="${vitrine_theme:-BeOS}"
+		unset vitrine_theme
+	fi
+	export GTK_THEME
 	export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
 
 	# pam_systemd/logind is the primary provider; the /run/vos/user tree

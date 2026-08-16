@@ -106,6 +106,7 @@ static gid_t sUserGid             = (gid_t)-1;
 static bool  sSystemMode          = false;
 static char  sRuntimeDir[PATH_MAX]= "";
 static bool is_graphical_login_allowed(struct passwd* pw);
+static void vitrine_gtk_theme(char* out, size_t len);
 static bool  sGreeterMode         = false;
 
 
@@ -651,12 +652,17 @@ handle_launch_job(BPrivate::KMessage& kmsg, uid_t sender_uid)
 		// sockets are swept at compositor start), and they must be set
 		// HERE, not only in profile.d — Tracker-launched applications
 		// never source a login shell. Overwrite=0 keeps admin overrides.
+		// GTK_THEME is the user's pick from the Vitrine preferences panel
+		// (read fresh per job, so a re-login honors the latest choice);
+		// the default stays the vendored BeOS look.
 		if (access("/system/servers/Vitrine", X_OK) == 0) {
+			char gtkTheme[128];
+			vitrine_gtk_theme(gtkTheme, sizeof(gtkTheme));
 			setenv("WAYLAND_DISPLAY",       "wayland-0",   0);
 			setenv("DISPLAY",               ":0",          0);
 			setenv("QT_QPA_PLATFORM",       "wayland",     0);
 			setenv("GDK_BACKEND",           "wayland,x11", 0);
-			setenv("GTK_THEME",             "BeOS",        0);
+			setenv("GTK_THEME",             gtkTheme,      0);
 			setenv("LIBGL_ALWAYS_SOFTWARE", "1",           0);
 		}
 
@@ -1150,6 +1156,50 @@ vitrine_autostart_enabled()
 	}
 	fclose(file);
 	return enabled;
+}
+
+
+/*!	Reads the user's GTK theme choice for guest applications (`gtk_theme`
+	in the same panel-written file as `autostart`). Fills `out` with the
+	theme name; anything unreadable, absent or oversized means the
+	vendored BeOS default. Same trust model as the autostart reader.
+*/
+static void
+vitrine_gtk_theme(char* out, size_t len)
+{
+	snprintf(out, len, "BeOS");
+	if (sUserHome[0] == '\0')
+		return;
+
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/config/settings/vitrine", sUserHome);
+	FILE* file = fopen(path, "r");
+	if (file == NULL)
+		return;
+
+	char line[256];
+	while (fgets(line, sizeof(line), file) != NULL) {
+		char* p = line;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p == '#' || strncmp(p, "gtk_theme", 9) != 0)
+			continue;
+		p += 9;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p != '=')
+			continue;
+		p++;
+		while (isspace((unsigned char)*p))
+			p++;
+		char* end = p + strlen(p);
+		while (end > p && isspace((unsigned char)end[-1]))
+			end--;
+		*end = '\0';
+		if (*p != '\0' && strlen(p) < len)
+			snprintf(out, len, "%s", p);
+	}
+	fclose(file);
 }
 
 

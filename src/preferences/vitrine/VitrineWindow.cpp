@@ -13,18 +13,24 @@
 
 #include <Alert.h>
 #include <Application.h>
+#include <Box.h>
 #include <Button.h>
 #include <Catalog.h>
 #include <CheckBox.h>
 #include <Deskbar.h>
+#include <Directory.h>
 #include <Entry.h>
 #include <FindDirectory.h>
 #include <Invoker.h>
 #include <LayoutBuilder.h>
+#include <MenuField.h>
+#include <MenuItem.h>
 #include <MessageRunner.h>
 #include <Path.h>
+#include <PopUpMenu.h>
 #include <Roster.h>
 #include <String.h>
+#include <StringList.h>
 #include <StringView.h>
 
 
@@ -38,6 +44,7 @@ static const uint32 kMsgRefreshStatus = 'rfsh';
 static const uint32 kMsgTrayToggled = 'tray';
 static const uint32 kMsgSeparateToggled = 'sepw';
 static const uint32 kMsgRestartAnswer = 'rsta';
+static const uint32 kMsgThemeSelected = 'gthm';
 
 
 static bool
@@ -93,6 +100,16 @@ VitrineWindow::VitrineWindow()
 	fStartButton = new BButton("start", B_TRANSLATE("Start now"),
 		new BMessage(kMsgStartVitrine));
 
+	/* GTK theme of guest applications, delivered as GTK_THEME at login by
+	 * janus and profile.d — hence the permanent next-login hint (NOT in
+	 * fStatus, which _UpdateStatus() overwrites). */
+	_ReadString("gtk_theme", fGtkTheme);
+	_BuildThemeMenu();
+	fThemeField = new BMenuField("gtktheme", B_TRANSLATE("GTK theme:"),
+		fThemeMenu);
+	BStringView* themeHint = new BStringView("themehint",
+		B_TRANSLATE("The change takes effect at the next login."));
+
 	/* B_ABOUT_REQUESTED goes to the application, which owns the panel (see
 	 * VitrineApp::AboutRequested) — the same handler the Deskbar's About
 	 * item reaches. */
@@ -101,17 +118,48 @@ VitrineWindow::VitrineWindow()
 		new BMessage(B_ABOUT_REQUESTED));
 	aboutButton->SetTarget(be_app);
 
+	/* Three labeled sections (the BBox + layout-View idiom the other
+	 * preferences panels use). */
+	BBox* statusBox = new BBox("statusbox");
+	statusBox->SetLabel(B_TRANSLATE("Status"));
+	statusBox->AddChild(BLayoutBuilder::Group<>(B_VERTICAL,
+			B_USE_ITEM_SPACING)
+		.SetInsets(B_USE_DEFAULT_SPACING)
+		.Add(fStatus)
+		.AddGroup(B_HORIZONTAL)
+			.Add(fStartButton)
+			.AddGlue()
+		.End()
+		.View());
+
+	BBox* behaviorBox = new BBox("behaviorbox");
+	behaviorBox->SetLabel(B_TRANSLATE("Behavior"));
+	behaviorBox->AddChild(BLayoutBuilder::Group<>(B_VERTICAL,
+			B_USE_ITEM_SPACING)
+		.SetInsets(B_USE_DEFAULT_SPACING)
+		.Add(fAutostartBox)
+		.Add(fSeparateBox)
+		.Add(fTrayBox)
+		.View());
+
+	BBox* appearanceBox = new BBox("appearancebox");
+	appearanceBox->SetLabel(B_TRANSLATE("Appearance"));
+	appearanceBox->AddChild(BLayoutBuilder::Group<>(B_VERTICAL,
+			B_USE_ITEM_SPACING)
+		.SetInsets(B_USE_DEFAULT_SPACING)
+		.Add(fThemeField)
+		.Add(themeHint)
+		.View());
+
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_ITEM_SPACING)
 		.SetInsets(B_USE_WINDOW_INSETS)
 		.Add(header)
 		.Add(blurb)
-		.Add(fAutostartBox)
-		.Add(fSeparateBox)
-		.Add(fTrayBox)
-		.Add(fStatus)
+		.Add(statusBox)
+		.Add(behaviorBox)
+		.Add(appearanceBox)
 		.AddGlue()
 		.AddGroup(B_HORIZONTAL)
-			.Add(fStartButton)
 			.AddGlue()
 			.Add(aboutButton)
 		.End();
@@ -125,6 +173,7 @@ VitrineWindow::VitrineWindow()
 	if (!fInstalled) {
 		fAutostartBox->SetEnabled(false);
 		fSeparateBox->SetEnabled(false);
+		fThemeField->SetEnabled(false);
 	}
 	if (access(VITRINE_WINHOST_PATH, X_OK) != 0)
 		fSeparateBox->SetEnabled(false);
@@ -150,6 +199,21 @@ VitrineWindow::MessageReceived(BMessage* message)
 			_WriteSettings();
 			_UpdateStatus();
 			break;
+
+		case kMsgThemeSelected:
+		{
+			const char* theme;
+			if (message->FindString("theme", &theme) != B_OK)
+				break;
+			if (fGtkTheme == theme)
+				break;
+			/* The radio-mode menu already marked the picked item; the
+			 * consumers (janus, profile.d) read the file at the next
+			 * login, so writing it is the whole job. */
+			fGtkTheme = theme;
+			_WriteSettings();
+			break;
+		}
 
 		case kMsgSeparateToggled:
 		{
@@ -255,24 +319,23 @@ VitrineWindow::QuitRequested()
 }
 
 
-/*!	Reads one boolean key. Anything unparsable — including a missing
-	file — means the caller's default. Both keys default OFF: Vitrine
-	waits as the greyed tray icon until the user starts it (or opts into
-	the autostart here), and the in-process window mode is the baseline.
+/*!	Reads one key's raw value (whitespace-trimmed; the last occurrence
+	wins). Returns false when the file or the key is absent — the caller
+	keeps its default.
 */
 bool
-VitrineWindow::_ReadBool(const char* key, bool defaultValue) const
+VitrineWindow::_ReadString(const char* key, BString& value) const
 {
 	BPath path;
 	if (!settings_path(path))
-		return defaultValue;
+		return false;
 
 	FILE* file = fopen(path.Path(), "r");
 	if (file == NULL)
-		return defaultValue;
+		return false;
 
 	size_t keyLength = strlen(key);
-	bool enabled = defaultValue;
+	bool found = false;
 	char line[256];
 	while (fgets(line, sizeof(line), file) != NULL) {
 		char* p = line;
@@ -288,13 +351,32 @@ VitrineWindow::_ReadBool(const char* key, bool defaultValue) const
 		p++;
 		while (isspace(*p))
 			p++;
-		enabled = strncasecmp(p, "true", 4) == 0
-			|| strncasecmp(p, "yes", 3) == 0
-			|| strncasecmp(p, "on", 2) == 0
-			|| *p == '1';
+		char* end = p + strlen(p);
+		while (end > p && isspace((unsigned char)end[-1]))
+			end--;
+		*end = '\0';
+		value = p;
+		found = true;
 	}
 	fclose(file);
-	return enabled;
+	return found;
+}
+
+
+/*!	Boolean view of _ReadString(). Anything unparsable — including a
+	missing file — means the caller's default. Both boolean keys default
+	OFF: Vitrine waits as the greyed tray icon until the user starts it
+	(or opts into the autostart here), and the in-process window mode is
+	the baseline.
+*/
+bool
+VitrineWindow::_ReadBool(const char* key, bool defaultValue) const
+{
+	BString value;
+	if (!_ReadString(key, value))
+		return defaultValue;
+	return value.ICompare("true") == 0 || value.ICompare("yes") == 0
+		|| value.ICompare("on") == 0 || value == "1";
 }
 
 
@@ -315,12 +397,85 @@ VitrineWindow::_WriteSettings() const
 		"# Vitrine — nested Wayland compositor.\n"
 		"# Written by the Vitrine preferences panel; autostart is read by\n"
 		"# janus and vos-session-boot at login, separate_windows by the\n"
-		"# compositor at start. Delete this file to restore defaults.\n"
+		"# compositor at start, gtk_theme by janus and profile.d at login\n"
+		"# (absent = the built-in BeOS look). Delete this file to restore\n"
+		"# defaults.\n"
 		"autostart = %s\n"
 		"separate_windows = %s\n",
 		fAutostartBox->Value() == B_CONTROL_ON ? "true" : "false",
 		fSeparateBox->Value() == B_CONTROL_ON ? "true" : "false");
+	if (!fGtkTheme.IsEmpty())
+		fprintf(file, "gtk_theme = %s\n", fGtkTheme.String());
 	fclose(file);
+}
+
+
+/*!	The GTK theme menu: the vendored default first, then every theme that
+	could actually take effect — GTK3's compiled-in ones plus each
+	directory under the theme paths shipping gtk-3.0/gtk.css (which is
+	what excludes the key-binding-only Default/Emacs entries). A saved
+	value missing from the scan (theme uninstalled) is still listed, so
+	the field never lies about the configuration.
+*/
+void
+VitrineWindow::_BuildThemeMenu()
+{
+	fThemeMenu = new BPopUpMenu(B_TRANSLATE("BeOS (default)"));
+
+	BMessage* message = new BMessage(kMsgThemeSelected);
+	message->AddString("theme", "");
+	BMenuItem* defaultItem = new BMenuItem(B_TRANSLATE("BeOS (default)"),
+		message);
+	if (fGtkTheme.IsEmpty())
+		defaultItem->SetMarked(true);
+	fThemeMenu->AddItem(defaultItem);
+	fThemeMenu->AddSeparatorItem();
+
+	BStringList themes;
+	themes.Add("Adwaita");
+	themes.Add("HighContrast");
+	themes.Add("HighContrastInverse");
+
+	BPath userThemes;
+	bool haveUserThemes = find_directory(B_USER_DIRECTORY, &userThemes)
+		== B_OK && userThemes.Append(".themes") == B_OK;
+	const char* dirs[] = {
+		GTK_THEMES_SYSTEM_DIR,
+		haveUserThemes ? userThemes.Path() : NULL,
+	};
+	for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
+		if (dirs[i] == NULL)
+			continue;
+		BDirectory dir(dirs[i]);
+		BEntry entry;
+		while (dir.GetNextEntry(&entry) == B_OK) {
+			if (!entry.IsDirectory())
+				continue;
+			char name[B_FILE_NAME_LENGTH];
+			if (entry.GetName(name) != B_OK
+				|| strcmp(name, GTK_THEME_DEFAULT) == 0)
+				continue;
+			BPath css(&entry);
+			if (css.Append("gtk-3.0/gtk.css") != B_OK
+				|| access(css.Path(), R_OK) != 0)
+				continue;
+			if (!themes.HasString(name))
+				themes.Add(name);
+		}
+	}
+	if (!fGtkTheme.IsEmpty() && !themes.HasString(fGtkTheme))
+		themes.Add(fGtkTheme);
+	themes.Sort();
+
+	for (int32 i = 0; i < themes.CountStrings(); i++) {
+		const BString& name = themes.StringAt(i);
+		message = new BMessage(kMsgThemeSelected);
+		message->AddString("theme", name);
+		BMenuItem* item = new BMenuItem(name, message);
+		if (name == fGtkTheme)
+			item->SetMarked(true);
+		fThemeMenu->AddItem(item);
+	}
 }
 
 
