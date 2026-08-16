@@ -128,6 +128,10 @@ struct vitrine_xwindow {
 
 	int win_id;                             /* -1 until first map */
 	BeWindow *window;                       /* NULL while unmapped/torn down */
+	struct vitrine_hosted_window *hosted;   /* helper-hosted (H4); owned by
+	                                         * the output, NULLed with
+	                                         * `window` at teardown. OR
+	                                         * windows are never hosted. */
 	struct vitrine_output *output;
 	struct wlr_scene *scene;
 	struct wlr_scene_tree *surface_tree;

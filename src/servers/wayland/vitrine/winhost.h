@@ -29,6 +29,13 @@ struct vitrine_hosted_window {
 	void *bits;
 	int stride;
 	int width, height;
+	/* Respawn snapshot (H4): everything a fresh helper needs to recreate
+	 * this window after a crash. Geometry/title track the winhost_* ops;
+	 * user-driven moves reach us via winhost_note_move() from the
+	 * BE_WINDOW_MOVED handlers. */
+	int x, y;
+	int resizable, borderless;
+	char title[128];
 	struct winhost *host;		/* NULL after the helper died */
 	struct wl_list link;		/* winhost.windows */
 	/* Superseded framebuffer areas (H2 resize): each WH_WIN_RESIZE parks
@@ -66,5 +73,8 @@ void winhost_set_limits(struct vitrine_hosted_window *hosted,
 void winhost_activate(struct vitrine_hosted_window *hosted);
 void winhost_send_behind(struct vitrine_hosted_window *hosted,
 	struct vitrine_hosted_window *behind_of);
+/* Bookkeeping only (no message): a user drag moved the window — keep the
+ * respawn snapshot current. Call from BE_WINDOW_MOVED handlers. */
+void winhost_note_move(struct vitrine_hosted_window *hosted, int x, int y);
 
 #endif	/* VITRINE_WINHOST_H */

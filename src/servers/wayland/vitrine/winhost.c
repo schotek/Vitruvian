@@ -66,6 +66,14 @@ struct winhost_mgr {
 	struct vitrine_server *server;
 	int listen_fd;
 	struct wl_list helpers;		/* winhost.link */
+	/* Crash-storm limiter (H4): ring of the last helper crash times.
+	 * Three crashes inside a minute flip `fallback` permanently — new
+	 * windows then take the in-process beshim path (compiled in forever
+	 * precisely for this), because a helper that keeps dying would
+	 * otherwise take every guest window down with it in a loop. */
+	int64_t crash_times[3];
+	int crash_idx;
+	bool fallback;
 };
 
 /* A framebuffer area superseded by a resize, parked until the helper acks
@@ -74,6 +82,11 @@ struct winhost_old_area {
 	int32_t area;
 	struct wl_list link;
 };
+
+/* Used by the respawn path in the fd handler before their definitions. */
+static int winhost_spawn(struct winhost *host);
+static int winhost_send(struct winhost *host, uint32_t type, uint32_t win_id,
+	const void *payload, uint32_t len);
 
 bool
 winhost_enabled(struct vitrine_server *server)
@@ -165,12 +178,66 @@ winhost_handle_fd(int fd, uint32_t mask, void *data)
 		host->source = NULL;
 		close(host->fd);
 		host->fd = -1;
-		/* No respawn (H4). A husk with live windows lingers so their
-		 * hosted->host stays valid (proxies keep their mapped area;
-		 * commits render into it harmlessly); an empty one goes now.
-		 * Either way the next window of this app spawns fresh. */
-		if (wl_list_empty(&host->windows))
+
+		if (wl_list_empty(&host->windows)) {
 			winhost_helper_free(host);
+			return 0;
+		}
+
+		/* Crash with live windows: respawn once, immediately, and
+		 * recreate every window from its snapshot — the framebuffer
+		 * areas still exist compositor-side, so the fresh helper
+		 * clones them and the content is back with the first blit. */
+		struct winhost_mgr *mgr = host->mgr;
+		mgr->crash_times[mgr->crash_idx % 3] = (int64_t)system_time();
+		mgr->crash_idx++;
+		if (mgr->crash_idx >= 3) {
+			int64_t oldest = mgr->crash_times[mgr->crash_idx % 3];
+			if ((int64_t)system_time() - oldest < 60 * 1000000LL
+					&& !mgr->fallback) {
+				mgr->fallback = true;
+				wlr_log(WLR_ERROR, "winhost: 3 helper crashes "
+					"in a minute — new windows fall back "
+					"to in-process hosting");
+			}
+		}
+		if (mgr->fallback || winhost_spawn(host) != 0) {
+			/* Husk: windows keep their mapped areas (commits render
+			 * into them harmlessly) and hosted->host stays valid;
+			 * the guest surfaces just have no BeOS window anymore. */
+			return 0;
+		}
+
+		struct vitrine_hosted_window *hosted;
+		int nwindows = 0;
+		wl_list_for_each(hosted, &host->windows, link) {
+			/* Areas parked for an in-flight resize ack: the only
+			 * consumer died with the old team, delete them now. */
+			struct winhost_old_area *old, *tmp;
+			wl_list_for_each_safe(old, tmp, &hosted->old_areas,
+					link) {
+				wl_list_remove(&old->link);
+				delete_area(old->area);
+				free(old);
+			}
+			struct wh_create msg = {
+				.x = hosted->x, .y = hosted->y,
+				.w = hosted->width, .h = hosted->height,
+				.stride = hosted->stride,
+				.area = hosted->area,
+				.resizable = hosted->resizable,
+				.borderless = hosted->borderless,
+			};
+			memcpy(msg.title, hosted->title, sizeof(msg.title));
+			winhost_send(host, WH_WIN_CREATE, hosted->win_id, &msg,
+				sizeof(msg));
+			winhost_send_damage(hosted, 0, 0, hosted->width,
+				hosted->height);
+			nwindows++;
+		}
+		wlr_log(WLR_INFO, "winhost: helper '%s' respawned as pid %d "
+			"with %d windows", host->app_id, (int)host->pid,
+			nwindows);
 		return 0;
 	}
 
@@ -408,6 +475,8 @@ winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec,
 	struct winhost_mgr *mgr = server->winhost;
 	if (mgr == NULL || spec == NULL || spec->w <= 0 || spec->h <= 0)
 		return NULL;
+	if (mgr->fallback)
+		return NULL;	/* crash storm: callers take the beshim path */
 
 	struct winhost *host = winhost_helper_for_app(mgr, app_id);
 	if (host == NULL)
@@ -421,6 +490,12 @@ winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec,
 	hosted->width = spec->w;
 	hosted->height = spec->h;
 	hosted->stride = spec->w * 4;
+	hosted->x = spec->x;
+	hosted->y = spec->y;
+	hosted->resizable = spec->resizable;
+	hosted->borderless = spec->borderless;
+	snprintf(hosted->title, sizeof(hosted->title), "%s",
+		spec->title != NULL ? spec->title : "");
 	hosted->host = host;
 	wl_list_init(&hosted->old_areas);
 
@@ -506,9 +581,20 @@ winhost_move_window(struct vitrine_hosted_window *hosted, int x, int y)
 {
 	if (hosted == NULL || hosted->host == NULL)
 		return;
+	hosted->x = x;
+	hosted->y = y;
 	struct wh_move msg = { x, y };
 	winhost_send(hosted->host, WH_WIN_MOVE, hosted->win_id, &msg,
 		sizeof(msg));
+}
+
+void
+winhost_note_move(struct vitrine_hosted_window *hosted, int x, int y)
+{
+	if (hosted == NULL)
+		return;
+	hosted->x = x;
+	hosted->y = y;
 }
 
 int
@@ -569,6 +655,7 @@ winhost_set_title(struct vitrine_hosted_window *hosted, const char *title)
 		return;
 	char buf[256];
 	snprintf(buf, sizeof(buf), "%s", title != NULL ? title : "");
+	snprintf(hosted->title, sizeof(hosted->title), "%s", buf);
 	winhost_send(hosted->host, WH_WIN_SET_TITLE, hosted->win_id, buf,
 		(uint32_t)strlen(buf) + 1);
 }

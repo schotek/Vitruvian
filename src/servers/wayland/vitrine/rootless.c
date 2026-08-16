@@ -344,26 +344,25 @@ rootless_map(struct vitrine_toplevel *toplevel)
 		.win_id = window->win_id,
 		.borderless = 0,	/* policy: always the BeOS tab */
 	};
-	/* H1 gate: Wayland toplevels can be hosted in the helper process
-	 * (own Deskbar team) instead of an in-process BeOS window. Exactly
-	 * one of window/hosted ends up set; the beshim_* calls below all
-	 * no-op on a NULL BeWindow, and apply_size() skips hosted windows
-	 * (resize handshake is H2). */
+	/* Winhost gate: Wayland toplevels are hosted in a helper process
+	 * (own Deskbar team) when enabled. Exactly one of window/hosted ends
+	 * up set. Helper creation failing — spawn error, crash-storm
+	 * fallback (H4) — degrades to the in-process path rather than losing
+	 * the window: the guest app then merely lacks its own Deskbar row. */
 	if (winhost_enabled(server)) {
 		window->hosted = winhost_create_window(server, &spec,
 			xdg_toplevel->app_id);
-		if (window->hosted == NULL) {
-			free(window);
-			return;
+		if (window->hosted != NULL) {
+			window->output = vitrine_output_create_from_hosted(
+				server, window->hosted, geo.width, geo.height);
+			if (window->output == NULL) {
+				winhost_destroy_window(window->hosted);
+				free(window);
+				return;
+			}
 		}
-		window->output = vitrine_output_create_from_hosted(server,
-			window->hosted, geo.width, geo.height);
-		if (window->output == NULL) {
-			winhost_destroy_window(window->hosted);
-			free(window);
-			return;
-		}
-	} else {
+	}
+	if (window->hosted == NULL) {
 		window->window = beshim_create_xwindow(server->shim, &spec);
 		if (window->window == NULL) {
 			free(window);
@@ -510,9 +509,11 @@ vitrine_rootless_handle_window_event(struct vitrine_server *server,
 
 	case BE_WINDOW_MOVED:
 		/* Bookkeeping only — Wayland clients don't know positions;
-		 * this feeds desktop→window pointer translation. */
+		 * this feeds desktop→window pointer translation (and the
+		 * helper respawn snapshot). */
 		window->x = ev->x;
 		window->y = ev->y;
+		winhost_note_move(window->hosted, ev->x, ev->y);
 		break;
 
 	case BE_WINDOW_FOCUS_IN:

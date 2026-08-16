@@ -28,11 +28,21 @@
 #include <wlr/util/log.h>
 
 #include "vitrine.h"
+#include "winhost.h"
 
 /* Placement clamps — keep in sync with rootless.c (same policy). */
 #define X_CLAMP_MIN_X	4
 #define X_CLAMP_MIN_Y	28	/* BeOS tab height */
 #define X_CLAMP_CORNER	64
+
+/* Live in either hosting mode (helper team since H4, or in-process)?
+ * Same rule as vitrine_rootless_window_alive: guards must never test
+ * `->window` alone — that drops helper-hosted windows. */
+static bool
+xwindow_alive(const struct vitrine_xwindow *xw)
+{
+	return xw->window != NULL || xw->hosted != NULL;
+}
 
 static struct vitrine_xwindow *
 xwindow_by_id(struct vitrine_server *server, int win_id)
@@ -91,7 +101,7 @@ xwindow_restack_top(struct vitrine_xwindow *xw)
 {
 	struct vitrine_server *server = xw->server;
 
-	if (xw->or_window || xw->xsurface == NULL || xw->window == NULL)
+	if (xw->or_window || xw->xsurface == NULL || !xwindow_alive(xw))
 		return;
 	if (server->x_top == xw && !xw->restack_pending)
 		return;
@@ -134,7 +144,7 @@ vitrine_xwayland_surface_at_win(struct vitrine_server *server, int win_id,
 	double x, double y, double *sx, double *sy)
 {
 	struct vitrine_xwindow *xw = xwindow_by_id(server, win_id);
-	if (xw == NULL || xw->window == NULL)
+	if (xw == NULL || !xwindow_alive(xw))
 		return NULL;
 	return xwindow_scene_surface_at(xw, x - xw->x, y - xw->y, sx, sy);
 }
@@ -149,7 +159,7 @@ vitrine_xwayland_desktop_surface_at(struct vitrine_server *server,
 		return NULL;
 	struct vitrine_xwindow *xw;
 	wl_list_for_each(xw, &server->xwindows, link) {
-		if (xw->window == NULL)
+		if (!xwindow_alive(xw))
 			continue;
 		double lx = x - xw->x;
 		double ly = y - xw->y;
@@ -199,6 +209,7 @@ xwindow_schedule_teardown(struct vitrine_xwindow *xw)
 	wlr_log(WLR_INFO, "x window %d torn down", xw->win_id);
 	xw->teardown_scheduled = true;
 	xw->window = NULL; /* stale win_id events now drop by contract */
+	xw->hosted = NULL; /* owned by the output, destroyed with it */
 	xw->restack_pending = false;
 	if (xw->server->x_top == xw)
 		xw->server->x_top = NULL;
@@ -269,7 +280,7 @@ static void
 xwindow_apply_size_limits(struct vitrine_xwindow *xw)
 {
 	xcb_size_hints_t *hints = xw->xsurface->size_hints;
-	if (xw->window == NULL || hints == NULL)
+	if (!xwindow_alive(xw) || hints == NULL)
 		return;
 	int min_w = 0, min_h = 0, max_w = 0, max_h = 0;
 	if (hints->flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) {
@@ -280,7 +291,40 @@ xwindow_apply_size_limits(struct vitrine_xwindow *xw)
 		max_w = hints->max_width;
 		max_h = hints->max_height;
 	}
-	beshim_set_size_limits(xw->window, min_w, min_h, max_w, max_h);
+	if (xw->hosted != NULL)
+		winhost_set_limits(xw->hosted, min_w, min_h, max_w, max_h);
+	else
+		beshim_set_size_limits(xw->window, min_w, min_h, max_w, max_h);
+}
+
+/* Hosting-mode split for a compositor-driven move/resize (XWM configures,
+ * client requests). The hosted resize is the H2 area-swap handshake: only
+ * a successfully sent swap may resize the wlr output — otherwise the
+ * shared framebuffer keeps yesterday's size. */
+static void
+xwindow_apply_geometry(struct vitrine_xwindow *xw, int x, int y, int w, int h)
+{
+	if (x != xw->x || y != xw->y) {
+		xw->x = x;
+		xw->y = y;
+		if (xw->hosted != NULL)
+			winhost_move_window(xw->hosted, x, y);
+		else if (xw->window != NULL)
+			beshim_move_window(xw->window, x, y);
+	}
+	if (w != xw->width || h != xw->height) {
+		if (xw->hosted != NULL) {
+			if (winhost_resize_window(xw->hosted, w, h) != 0)
+				return;
+		} else if (xw->window != NULL) {
+			beshim_resize_window(xw->window, w, h);
+		} else {
+			return;
+		}
+		xw->width = w;
+		xw->height = h;
+		vitrine_output_resize(xw->output, w, h);
+	}
 }
 
 /* ---- surface lifecycle ---- */
@@ -291,10 +335,10 @@ xwindow_map(struct vitrine_xwindow *xw)
 	struct vitrine_server *server = xw->server;
 	struct wlr_xwayland_surface *xs = xw->xsurface;
 
-	if (xw->window != NULL || xw->teardown_scheduled) {
+	if (xwindow_alive(xw) || xw->teardown_scheduled) {
 		wlr_log(WLR_ERROR, "xwindow map in unexpected state (window %p"
-			" teardown %d)", (void *)xw->window,
-			xw->teardown_scheduled);
+			" hosted %p teardown %d)", (void *)xw->window,
+			(void *)xw->hosted, xw->teardown_scheduled);
 		return;
 	}
 
@@ -324,16 +368,37 @@ xwindow_map(struct vitrine_xwindow *xw)
 		.win_id = xw->win_id,
 		.borderless = 0,	/* policy: every X toplevel gets the tab */
 	};
-	xw->window = beshim_create_xwindow(server->shim, &spec);
-	if (xw->window == NULL)
-		return;
+	/* Winhost gate (H4): regular X toplevels get a helper team keyed by
+	 * WM_CLASS — the X analogue of the Wayland app_id, and what the
+	 * .desktop StartupWMClass= key matches. Override-redirect windows
+	 * (menus, tooltips) always stay in-process: they have no Deskbar
+	 * presence and their grab semantics stop at the process boundary.
+	 * Helper failure degrades to the in-process path (crash-storm
+	 * fallback included), never to a lost window. */
+	if (!xs->override_redirect && winhost_enabled(server)) {
+		xw->hosted = winhost_create_window(server, &spec, xs->class);
+		if (xw->hosted != NULL) {
+			xw->output = vitrine_output_create_from_hosted(server,
+				xw->hosted, w, h);
+			if (xw->output == NULL) {
+				winhost_destroy_window(xw->hosted);
+				xw->hosted = NULL;
+				return;
+			}
+		}
+	}
+	if (xw->hosted == NULL) {
+		xw->window = beshim_create_xwindow(server->shim, &spec);
+		if (xw->window == NULL)
+			return;
 
-	xw->output = vitrine_output_create_from_window(server, xw->window,
-		w, h);
-	if (xw->output == NULL) {
-		beshim_destroy_window(xw->window);
-		xw->window = NULL;
-		return;
+		xw->output = vitrine_output_create_from_window(server,
+			xw->window, w, h);
+		if (xw->output == NULL) {
+			beshim_destroy_window(xw->window);
+			xw->window = NULL;
+			return;
+		}
 	}
 
 	xw->scene = wlr_scene_create();
@@ -432,20 +497,10 @@ xwindow_handle_request_configure(struct wl_listener *listener, void *data)
 	int w = ev->width;
 	int h = ev->height;
 
-	if (xw->window != NULL) {
+	if (xwindow_alive(xw)) {
 		if (!xw->or_window && y < X_CLAMP_MIN_Y)
 			y = X_CLAMP_MIN_Y;
-		if (x != xw->x || y != xw->y) {
-			xw->x = x;
-			xw->y = y;
-			beshim_move_window(xw->window, x, y);
-		}
-		if (w != xw->width || h != xw->height) {
-			xw->width = w;
-			xw->height = h;
-			beshim_resize_window(xw->window, w, h);
-			vitrine_output_resize(xw->output, w, h);
-		}
+		xwindow_apply_geometry(xw, x, y, w, h);
 	}
 
 	wlr_xwayland_surface_configure(xw->xsurface, x, y, w, h);
@@ -457,9 +512,12 @@ xwindow_handle_request_activate(struct wl_listener *listener, void *data)
 	struct vitrine_xwindow *xw =
 		wl_container_of(listener, xw, request_activate);
 
-	if (xw->window == NULL || xw->xsurface->surface == NULL)
+	if (!xwindow_alive(xw) || xw->xsurface->surface == NULL)
 		return;
-	beshim_activate(xw->window);
+	if (xw->hosted != NULL)
+		winhost_activate(xw->hosted);
+	else
+		beshim_activate(xw->window);
 	wlr_xwayland_surface_activate(xw->xsurface, true);
 	vitrine_focus_surface(xw->server, xw->xsurface->surface);
 }
@@ -473,20 +531,10 @@ xwindow_handle_set_geometry(struct wl_listener *listener, void *data)
 		wl_container_of(listener, xw, set_geometry);
 	struct wlr_xwayland_surface *xs = xw->xsurface;
 
-	if (xw->window == NULL)
+	if (!xwindow_alive(xw))
 		return;
 
-	if (xs->x != xw->x || xs->y != xw->y) {
-		xw->x = xs->x;
-		xw->y = xs->y;
-		beshim_move_window(xw->window, xw->x, xw->y);
-	}
-	if (xs->width != xw->width || xs->height != xw->height) {
-		xw->width = xs->width;
-		xw->height = xs->height;
-		beshim_resize_window(xw->window, xw->width, xw->height);
-		vitrine_output_resize(xw->output, xw->width, xw->height);
-	}
+	xwindow_apply_geometry(xw, xs->x, xs->y, xs->width, xs->height);
 }
 
 static void
@@ -494,7 +542,9 @@ xwindow_handle_set_title(struct wl_listener *listener, void *data)
 {
 	struct vitrine_xwindow *xw = wl_container_of(listener, xw, set_title);
 
-	if (xw->window != NULL)
+	if (xw->hosted != NULL)
+		winhost_set_title(xw->hosted, xw->xsurface->title);
+	else if (xw->window != NULL)
 		beshim_set_title(xw->window, xw->xsurface->title);
 }
 
@@ -555,7 +605,7 @@ vitrine_xwayland_handle_window_event(struct vitrine_server *server,
 	const BeInputEvent *ev)
 {
 	struct vitrine_xwindow *xw = xwindow_by_id(server, ev->screen);
-	if (xw == NULL || xw->xsurface == NULL || xw->window == NULL)
+	if (xw == NULL || xw->xsurface == NULL || !xwindow_alive(xw))
 		return; /* stale win_id after teardown — drop by contract */
 
 	struct wlr_xwayland_surface *xs = xw->xsurface;
@@ -573,6 +623,7 @@ vitrine_xwayland_handle_window_event(struct vitrine_server *server,
 		 * user drag must be forwarded (xterm places menus by it). */
 		xw->x = ev->x;
 		xw->y = ev->y;
+		winhost_note_move(xw->hosted, ev->x, ev->y);
 		wlr_xwayland_surface_configure(xs, ev->x, ev->y,
 			xw->width, xw->height);
 		break;
