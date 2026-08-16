@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,7 +97,14 @@ static int winhost_send(struct winhost *host, uint32_t type, uint32_t win_id,
 static bool
 settings_separate_windows(void)
 {
+	/* janus exports HOME for its run_as_user children (system mode covers
+	 * both the live persona and an installed system's greeter login); the
+	 * passwd fallback covers user-mode janus and manual starts. */
 	const char *home = getenv("HOME");
+	if (home == NULL || home[0] == '\0') {
+		struct passwd *pw = getpwuid(getuid());
+		home = pw != NULL ? pw->pw_dir : NULL;
+	}
 	if (home == NULL || home[0] == '\0')
 		return false;
 

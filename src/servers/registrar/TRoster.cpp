@@ -350,6 +350,17 @@ TRoster::HandleCompleteRegistration(BMessage* request)
 			if (info && info->state == APP_STATE_PRE_REGISTERED) {
 				info->thread = thread;
 				info->port = port;
+				// VOS: the completing application supplies its own flags
+				// word — the pre-registration one is only the launcher's
+				// read of the binary, which a runtime override
+				// (VOS_APP_FLAGS_OVERRIDE, BApplication::_InitData)
+				// legitimately differs from. Must land before _AppAdded:
+				// that broadcast is what the Deskbar builds its
+				// application list from. Absent field (older libbe) keeps
+				// the pre-registration value.
+				uint32 flags;
+				if (request->FindInt32("flags", (int32*)&flags) == B_OK)
+					info->flags = flags;
 				info->state = APP_STATE_REGISTERED;
 				_AppAdded(info);
 			} else

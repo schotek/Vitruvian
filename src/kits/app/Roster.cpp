@@ -1639,7 +1639,7 @@ BRoster::_SetThreadAndTeam(uint32 entryToken, thread_id thread,
 */
 status_t
 BRoster::_CompleteRegistration(team_id team, thread_id thread,
-	port_id port) const
+	port_id port, uint32 flags) const
 {
 	status_t error = B_OK;
 
@@ -1653,6 +1653,12 @@ BRoster::_CompleteRegistration(team_id team, thread_id thread,
 
 	if (error == B_OK && port >= 0)
 		error = request.AddInt32("port", port);
+
+	// VOS: the application's own flags word replaces the pre-registration
+	// guess (see RosterPrivate.h); the registrar treats a missing field as
+	// "keep what pre-registration recorded".
+	if (error == B_OK)
+		error = request.AddInt32("flags", (int32)flags);
 
 	// send the request
 	BMessage reply;

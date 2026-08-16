@@ -459,9 +459,12 @@ BApplication::_InitData(const char* signature, bool initGUI, status_t* _error)
 		// check the signature and correct it, if necessary, also the case
 		if (strcmp(appInfo.signature, fAppName))
 			BRoster::Private().SetSignature(team, fAppName);
-		// complete the registration
+		// complete the registration; appFlags (computed above, including
+		// the VOS_APP_FLAGS_OVERRIDE hook) replaces the launcher's
+		// pre-registration guess — otherwise a runtime override is lost
+		// on every roster-initiated launch
 		fInitError = BRoster::Private().CompleteRegistration(team, thread,
-						appInfo.port);
+						appInfo.port, appFlags);
 	} else if (fInitError == B_OK) {
 		// not pre-registered -- try to register the application
 		team_id otherTeam = -1;

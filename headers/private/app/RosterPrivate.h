@@ -53,9 +53,14 @@ class BRoster::Private {
 		status_t SetSignature(team_id team, const char *mimeSig) const
 			{ return fRoster->_SetSignature(team, mimeSig); }
 
+		/* VOS: `flags` completes the registration with the flags word the
+		   application itself computed — a pre-registration only carries the
+		   launcher's guess read from the binary, which a runtime override
+		   (VOS_APP_FLAGS_OVERRIDE) legitimately differs from. */
 		status_t CompleteRegistration(team_id team, thread_id thread,
-					port_id port) const
-			{ return fRoster->_CompleteRegistration(team, thread, port); }
+					port_id port, uint32 flags) const
+			{ return fRoster->_CompleteRegistration(team, thread, port,
+					flags); }
 
 		status_t IsAppRegistered(const entry_ref *ref, team_id team,
 					uint32 token, bool *preRegistered, app_info *info) const

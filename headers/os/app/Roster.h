@@ -166,7 +166,8 @@ private:
 									port_id* _port) const;
 
 			status_t			_CompleteRegistration(team_id team,
-									thread_id thread, port_id port) const;
+									thread_id thread, port_id port,
+									uint32 flags) const;
 
 			bool				_IsAppPreRegistered(const entry_ref* ref,
 									team_id team, app_info* info) const;
