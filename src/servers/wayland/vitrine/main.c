@@ -61,7 +61,12 @@ main(int argc, char** argv)
 	 * need the composited swapchain buffer. Revisit with dmabuf (F8). */
 	setenv("WLR_SCENE_DISABLE_DIRECT_SCANOUT", "1", 1);
 
-	server.shim = beshim_start("application/x-vnd.vos-Vitrine");
+	/* "Separate windows" mode (the winhost gate, ČÁST 3): when the helper
+	 * teams will own every user-visible window, the compositor registers
+	 * as a background app — its own Deskbar row would only duplicate
+	 * them. Decided per start; the tray icon remains the control handle. */
+	server.shim = beshim_start("application/x-vnd.vos-Vitrine",
+		winhost_enabled(&server) ? 1 : 0);
 	if (server.shim == NULL) {
 		fprintf(stderr, "vitrine: cannot reach app_server "
 			"(beshim_start failed)\n");

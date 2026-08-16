@@ -96,8 +96,12 @@ typedef struct {
 /* ---- lifecycle ---- */
 
 /* Create the BApplication and start its looper thread. Returns NULL on error.
- * `signature` is the app_server MIME signature, e.g. "application/x-vnd.vos-Xvitruvian". */
-BeShim* beshim_start(const char* signature);
+ * `signature` is the app_server MIME signature, e.g. "application/x-vnd.vos-Xvitruvian".
+ * With `background_app` != 0 the team registers as B_BACKGROUND_APP for
+ * THIS start only (VOS_APP_FLAGS_OVERRIDE hook; the rdef stays visible-by-
+ * default) — used when the per-window helpers own every user-visible
+ * window, so the compositor row would only duplicate them. */
+BeShim* beshim_start(const char* signature, int background_app);
 
 /* Read end of the self-pipe. Add this fd to the X server's fd set
  * (SetNotifyFd / AddEnabledDevice); when readable, drain it with

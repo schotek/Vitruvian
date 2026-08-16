@@ -415,6 +415,21 @@ BApplication::_InitData(const char* signature, bool initGUI, status_t* _error)
 		}
 	}
 
+	// VOS: per-start override of the application flags. The flags word is
+	// otherwise static — read from the binary at registration — which
+	// leaves no hook for a program that only decides at runtime whether it
+	// should appear among the Deskbar's applications (Vitrine hides its
+	// team row in "separate windows" mode, where helper teams own all the
+	// user-visible windows). The numeric value replaces the whole word;
+	// the caller is expected to unset the variable as soon as its
+	// BApplication exists so child processes never inherit it.
+	if (const char* flagsOverride = getenv("VOS_APP_FLAGS_OVERRIDE")) {
+		char* end;
+		unsigned long value = strtoul(flagsOverride, &end, 0);
+		if (end != flagsOverride && *end == '\0')
+			appFlags = (uint32)value;
+	}
+
 #ifndef RUN_WITHOUT_REGISTRAR
 	// check whether be_roster is valid
 	if (fInitError == B_OK && registerApp

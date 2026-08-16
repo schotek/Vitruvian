@@ -21,11 +21,13 @@ public:
 	virtual bool			QuitRequested();
 
 private:
-			bool			_ReadAutostart() const;
-			void			_WriteAutostart(bool enabled) const;
+			bool			_ReadBool(const char* key,
+								bool defaultValue) const;
+			void			_WriteSettings() const;
 			void			_UpdateStatus();
 
 			BCheckBox*		fAutostartBox;
+			BCheckBox*		fSeparateBox;
 			BCheckBox*		fTrayBox;
 			BStringView*	fStatus;
 			BButton*		fStartButton;

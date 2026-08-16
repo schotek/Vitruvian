@@ -16,6 +16,7 @@
  * via the client path.
  */
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -88,14 +89,61 @@ static int winhost_spawn(struct winhost *host);
 static int winhost_send(struct winhost *host, uint32_t type, uint32_t win_id,
 	const void *payload, uint32_t len);
 
+/* The user's "Show windows separately" preference: `separate_windows` in
+ * ~/config/settings/vitrine (written by the VitrineSettings panel, same
+ * key=value shape janus parses for `autostart`). Default OFF — the legacy
+ * in-process mode stays first class. */
+static bool
+settings_separate_windows(void)
+{
+	const char *home = getenv("HOME");
+	if (home == NULL || home[0] == '\0')
+		return false;
+
+	char path[512];
+	snprintf(path, sizeof(path), "%s/config/settings/vitrine", home);
+	FILE *file = fopen(path, "r");
+	if (file == NULL)
+		return false;
+
+	bool enabled = false;
+	char line[256];
+	while (fgets(line, sizeof(line), file) != NULL) {
+		char *p = line;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p == '#' || strncmp(p, "separate_windows", 16) != 0)
+			continue;
+		p += 16;
+		while (isspace((unsigned char)*p))
+			p++;
+		if (*p != '=')
+			continue;
+		p++;
+		while (isspace((unsigned char)*p))
+			p++;
+		enabled = strncasecmp(p, "true", 4) == 0
+			|| strncasecmp(p, "yes", 3) == 0
+			|| strncasecmp(p, "on", 2) == 0
+			|| *p == '1';
+	}
+	fclose(file);
+	return enabled;
+}
+
 bool
 winhost_enabled(struct vitrine_server *server)
 {
 	(void)server;
 	static int enabled = -1;
 	if (enabled < 0) {
+		/* VITRINE_WINHOST stays as the explicit developer override in
+		 * both directions; without it the user's panel setting decides. */
 		const char *env = getenv("VITRINE_WINHOST");
-		enabled = (env != NULL && env[0] == '1') ? 1 : 0;
+		if (env != NULL)
+			enabled = env[0] == '1' ? 1 : 0;
+		else
+			enabled = settings_separate_windows() ? 1 : 0;
 		if (enabled && access(WH_HELPER_PATH, X_OK) != 0) {
 			wlr_log(WLR_ERROR, "winhost: %s missing, gate forced off",
 				WH_HELPER_PATH);

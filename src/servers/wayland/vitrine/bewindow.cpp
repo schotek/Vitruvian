@@ -47,6 +47,7 @@
 #include <AppDefs.h>
 #include <InterfaceDefs.h>
 #include <OS.h>
+#include <Roster.h>		/* app-flags words for VOS_APP_FLAGS_OVERRIDE */
 #include <cstdlib>
 
 #include <unistd.h>
@@ -203,10 +204,24 @@ static int32 run_app_thread(void* arg)
     return B_OK;
 }
 
-extern "C" BeShim* beshim_start(const char* signature)
+extern "C" BeShim* beshim_start(const char* signature, int background_app)
 {
     BeShim* shim = new BeShim();
     shim->signature = signature;
+
+    /* "Separate windows" mode: register this one start as a background
+     * app (libbe's VOS_APP_FLAGS_OVERRIDE hook in _InitData) so the
+     * compositor has no row among the Deskbar applications — the helper
+     * teams carry the user-visible windows. The variable is cleared right
+     * after the handshake below: by then the BApplication is registered,
+     * and no later child (helpers!) may inherit the override. The rdef
+     * keeps B_EXCLUSIVE_LAUNCH only, so the flags word must repeat it. */
+    if (background_app) {
+        char value[16];
+        snprintf(value, sizeof(value), "0x%x",
+            B_EXCLUSIVE_LAUNCH | B_BACKGROUND_APP);
+        setenv("VOS_APP_FLAGS_OVERRIDE", value, 1);
+    }
 
     int fds[2];
     if (pipe(fds) != 0) {
@@ -248,6 +263,11 @@ extern "C" BeShim* beshim_start(const char* signature)
         ;
     delete_sem(shim->startSem);
     shim->startSem = -1;
+
+    /* Registered (or failed) — either way the override must not leak into
+     * any process spawned from here on. */
+    if (background_app)
+        unsetenv("VOS_APP_FLAGS_OVERRIDE");
 
     if (shim->startStatus != B_OK) {
         fprintf(stderr, "vitrine: BApplication init failed: %s\n",

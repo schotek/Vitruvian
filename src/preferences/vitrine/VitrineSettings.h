@@ -20,6 +20,9 @@
 
 #define VITRINE_SIGNATURE	"application/x-vnd.vos-Vitrine"
 
+/* The per-window helper binary; "Show windows separately" needs it. */
+#define VITRINE_WINHOST_PATH	"/system/servers/vitrine_window_host"
+
 /* The Deskbar tray applet (src/apps/vitrinetray) this panel can toggle.
  * The item name is the tray view's Name() — BDeskbar looks items up by
  * it, not by signature. */

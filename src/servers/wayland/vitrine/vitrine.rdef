@@ -12,9 +12,13 @@
  * Vitrine still stays out of SYSTEM_SERVERS: that list is unconditional
  * while Vitrine only exists in --enable-wayland builds.
  *
- * NOT B_BACKGROUND_APP: unlike app_server or input_server, Vitrine hosts
- * user-visible windows, so it belongs in the Deskbar where the user can
- * reach its window list.
+ * NOT B_BACKGROUND_APP — by default. In-process mode hosts user-visible
+ * windows, so the team belongs in the Deskbar where the user can reach
+ * its window list. In "separate windows" mode the helper teams own every
+ * user window and the row would only duplicate them; the compositor then
+ * registers as a background app for that start only, via libbe's
+ * VOS_APP_FLAGS_OVERRIDE hook (beshim_start) — the flags here stay the
+ * visible default.
  */
 
 resource app_signature "application/x-vnd.vos-Vitrine";

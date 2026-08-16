@@ -10,6 +10,11 @@ Not running.	Vitrine window		Neběží.
 Vitrine is not installed in this system image.	Vitrine window		Vitrine není v tomto obrazu systému nainstalována.
 Start now	Vitrine window		Spustit nyní
 Show a control icon in the Deskbar tray	Vitrine window		Zobrazovat ovládací ikonu v liště Deskbaru
+Show windows of applications separately	Vitrine window		Zobrazovat okna aplikací samostatně
+Restart Vitrine	Vitrine window		Restartovat Vitrine
+The change takes effect the next time Vitrine starts. Restart it now?\n\nWindows of running Wayland and X11 applications will close.	Vitrine window		Změna se projeví při příštím spuštění Vitrine. Restartovat nyní?\n\nOkna běžících aplikací Wayland a X11 se zavřou.
+Later	Vitrine window		Později
+Restart now	Vitrine window		Restartovat nyní
 Changing the tray icon failed: %error%	Vitrine window		Změna ikony v liště selhala: %error%
 Could not start Vitrine: %error%	Vitrine window		Vitrine se nepodařilo spustit: %error%
 About…	Vitrine window		O aplikaci…

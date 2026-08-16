@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <Alert.h>
 #include <Application.h>
 #include <Button.h>
 #include <Catalog.h>
@@ -18,6 +19,7 @@
 #include <Deskbar.h>
 #include <Entry.h>
 #include <FindDirectory.h>
+#include <Invoker.h>
 #include <LayoutBuilder.h>
 #include <MessageRunner.h>
 #include <Path.h>
@@ -34,6 +36,8 @@ static const uint32 kMsgAutostartToggled = 'atgl';
 static const uint32 kMsgStartVitrine = 'strt';
 static const uint32 kMsgRefreshStatus = 'rfsh';
 static const uint32 kMsgTrayToggled = 'tray';
+static const uint32 kMsgSeparateToggled = 'sepw';
+static const uint32 kMsgRestartAnswer = 'rsta';
 
 
 static bool
@@ -64,6 +68,15 @@ VitrineWindow::VitrineWindow()
 		B_TRANSLATE("Start Vitrine when logging in"),
 		new BMessage(kMsgAutostartToggled));
 
+	/* ČÁST 3: the per-window helper mode. Each guest application then
+	 * appears as its own entry among the Deskbar applications (and the
+	 * Vitrine row disappears — the helper teams own all user-visible
+	 * windows). Read by the compositor at start; toggling offers a
+	 * restart. */
+	fSeparateBox = new BCheckBox("separate",
+		B_TRANSLATE("Show windows of applications separately"),
+		new BMessage(kMsgSeparateToggled));
+
 	/* The Deskbar tray icon (src/apps/vitrinetray) — the persistent handle
 	 * for a nested server that deliberately has no entry among the
 	 * applications. */
@@ -93,6 +106,7 @@ VitrineWindow::VitrineWindow()
 		.Add(header)
 		.Add(blurb)
 		.Add(fAutostartBox)
+		.Add(fSeparateBox)
 		.Add(fTrayBox)
 		.Add(fStatus)
 		.AddGlue()
@@ -102,11 +116,18 @@ VitrineWindow::VitrineWindow()
 			.Add(aboutButton)
 		.End();
 
-	fAutostartBox->SetValue(_ReadAutostart() ? B_CONTROL_ON : B_CONTROL_OFF);
+	fAutostartBox->SetValue(_ReadBool("autostart", true)
+		? B_CONTROL_ON : B_CONTROL_OFF);
+	fSeparateBox->SetValue(_ReadBool("separate_windows", false)
+		? B_CONTROL_ON : B_CONTROL_OFF);
 	fTrayBox->SetValue(BDeskbar().HasItem(VITRINE_TRAY_ITEM_NAME)
 		? B_CONTROL_ON : B_CONTROL_OFF);
-	if (!fInstalled)
+	if (!fInstalled) {
 		fAutostartBox->SetEnabled(false);
+		fSeparateBox->SetEnabled(false);
+	}
+	if (access(VITRINE_WINHOST_PATH, X_OK) != 0)
+		fSeparateBox->SetEnabled(false);
 	if (access(VITRINE_TRAY_PATH, X_OK) != 0)
 		fTrayBox->SetEnabled(false);
 	_UpdateStatus();
@@ -126,9 +147,49 @@ VitrineWindow::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
 		case kMsgAutostartToggled:
-			_WriteAutostart(fAutostartBox->Value() == B_CONTROL_ON);
+			_WriteSettings();
 			_UpdateStatus();
 			break;
+
+		case kMsgSeparateToggled:
+		{
+			_WriteSettings();
+			_UpdateStatus();
+			if (!be_roster->IsRunning(VITRINE_SIGNATURE))
+				break;
+			/* The compositor reads the setting at start — offer the
+			 * restart. Asynchronous by contract (a synchronous Go()
+			 * from a window thread deadlocks the app_server link);
+			 * the answer comes back as kMsgRestartAnswer. */
+			BAlert* alert = new BAlert(
+				B_TRANSLATE("Restart Vitrine"),
+				B_TRANSLATE("The change takes effect the next time "
+					"Vitrine starts. Restart it now?\n\nWindows of "
+					"running Wayland and X11 applications will "
+					"close."),
+				B_TRANSLATE("Later"), B_TRANSLATE("Restart now"),
+				NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			alert->Go(new BInvoker(new BMessage(kMsgRestartAnswer),
+				this));
+			break;
+		}
+
+		case kMsgRestartAnswer:
+		{
+			int32 which;
+			if (message->FindInt32("which", &which) != B_OK
+					|| which != 1)
+				break;
+			/* BE_QUIT path: Vitrine's ShimApp forwards the external
+			 * B_QUIT_REQUESTED into its event loop and exits cleanly.
+			 * Relaunch after a grace period — an immediate Launch
+			 * would hit B_ALREADY_RUNNING against the dying team. */
+			BMessenger(VITRINE_SIGNATURE).SendMessage(B_QUIT_REQUESTED);
+			BMessageRunner::StartSending(BMessenger(this),
+				new BMessage(kMsgStartVitrine), 2500000, 1);
+			break;
+		}
 
 		case kMsgStartVitrine:
 		{
@@ -194,30 +255,32 @@ VitrineWindow::QuitRequested()
 }
 
 
-/*!	Reads the autostart flag. Anything unparsable — including a missing
-	file — means the default, which is on: an image that ships Vitrine
-	starts it unless the user opted out.
+/*!	Reads one boolean key. Anything unparsable — including a missing
+	file — means the caller's default (autostart defaults on: an image
+	that ships Vitrine starts it unless the user opted out;
+	separate_windows defaults off: the in-process mode is the baseline).
 */
 bool
-VitrineWindow::_ReadAutostart() const
+VitrineWindow::_ReadBool(const char* key, bool defaultValue) const
 {
 	BPath path;
 	if (!settings_path(path))
-		return true;
+		return defaultValue;
 
 	FILE* file = fopen(path.Path(), "r");
 	if (file == NULL)
-		return true;
+		return defaultValue;
 
-	bool enabled = true;
+	size_t keyLength = strlen(key);
+	bool enabled = defaultValue;
 	char line[256];
 	while (fgets(line, sizeof(line), file) != NULL) {
 		char* p = line;
 		while (isspace(*p))
 			p++;
-		if (*p == '#' || strncmp(p, "autostart", 9) != 0)
+		if (*p == '#' || strncmp(p, key, keyLength) != 0)
 			continue;
-		p += 9;
+		p += keyLength;
 		while (isspace(*p))
 			p++;
 		if (*p != '=')
@@ -225,18 +288,21 @@ VitrineWindow::_ReadAutostart() const
 		p++;
 		while (isspace(*p))
 			p++;
-		enabled = !(strncasecmp(p, "false", 5) == 0
-			|| strncasecmp(p, "no", 2) == 0
-			|| strncasecmp(p, "off", 3) == 0
-			|| *p == '0');
+		enabled = strncasecmp(p, "true", 4) == 0
+			|| strncasecmp(p, "yes", 3) == 0
+			|| strncasecmp(p, "on", 2) == 0
+			|| *p == '1';
 	}
 	fclose(file);
 	return enabled;
 }
 
 
+/*!	Rewrites the whole settings file from the checkbox states — it is
+	small and fully owned by this panel, so a rewrite beats merging.
+*/
 void
-VitrineWindow::_WriteAutostart(bool enabled) const
+VitrineWindow::_WriteSettings() const
 {
 	BPath path;
 	if (!settings_path(path))
@@ -247,9 +313,13 @@ VitrineWindow::_WriteAutostart(bool enabled) const
 		return;
 	fprintf(file,
 		"# Vitrine — nested Wayland compositor.\n"
-		"# Written by the Vitrine preferences panel; read by janus and\n"
-		"# vos-session-boot at login. Delete this file to restore defaults.\n"
-		"autostart = %s\n", enabled ? "true" : "false");
+		"# Written by the Vitrine preferences panel; autostart is read by\n"
+		"# janus and vos-session-boot at login, separate_windows by the\n"
+		"# compositor at start. Delete this file to restore defaults.\n"
+		"autostart = %s\n"
+		"separate_windows = %s\n",
+		fAutostartBox->Value() == B_CONTROL_ON ? "true" : "false",
+		fSeparateBox->Value() == B_CONTROL_ON ? "true" : "false");
 	fclose(file);
 }
 
