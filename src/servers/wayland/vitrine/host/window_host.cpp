@@ -324,8 +324,8 @@ reader_thread(void* /*arg*/)
 
 class HostApp : public BApplication {
 public:
-	HostApp(status_t* error)
-		: BApplication(kSignature, error) {}
+	HostApp(const char* signature, status_t* error)
+		: BApplication(signature, error) {}
 };
 
 int
@@ -357,6 +357,13 @@ main()
 	fcntl(sSocket, F_SETFL, fcntl(sSocket, F_GETFL, 0) | O_NONBLOCK);
 	sSink.pipe_w = sSocket;
 
+	/* H3 identity stubs pass the per-app signature in the environment; the
+	 * registrar then files this team under the guest app's identity, which
+	 * is what makes the Deskbar row per app. */
+	const char* sig = getenv(WH_SIG_ENV);
+	if (sig == NULL || sig[0] == '\0')
+		sig = kSignature;
+
 	/* app_server may still be warming up at session boot; same retry as
 	 * the compositor shim and the tray applet. */
 	const int kMaxAttempts = 40;
@@ -364,7 +371,7 @@ main()
 	HostApp* app = NULL;
 	for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
 		error = B_ERROR;
-		app = new HostApp(&error);
+		app = new HostApp(sig, &error);
 		if (error == B_OK)
 			break;
 		delete app;

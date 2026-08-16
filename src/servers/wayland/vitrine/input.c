@@ -420,7 +420,8 @@ handle_motion(struct vitrine_input *input, const BeInputEvent *ev)
 			struct vitrine_rootless_window *window =
 				vitrine_rootless_window_by_id(server,
 					ev->screen);
-			if (window != NULL && window->window != NULL) {
+			if (window != NULL
+					&& vitrine_rootless_window_alive(window)) {
 				surface = scene_surface_at(window->scene,
 					ev->x - window->x, ev->y - window->y,
 					&sx, &sy);

@@ -55,6 +55,7 @@ add_executable(vitrine
 	winhost.c
 	bewindow.cpp
 	bewindow_win.cpp
+	stubgen.cpp
 	"${CMAKE_CURRENT_BINARY_DIR}/xdg-shell-protocol.h"
 )
 
@@ -82,8 +83,9 @@ set_target_properties(vitrine PROPERTIES C_STANDARD 11 OUTPUT_NAME Vitrine)
 # wlroots 0.18 exposes the backend/interface headers only behind this guard.
 target_compile_definitions(vitrine PRIVATE WLR_USE_UNSTABLE)
 
-set_source_files_properties(bewindow.cpp bewindow_win.cpp PROPERTIES
-	COMPILE_FLAGS "-std=gnu++11 -include LinuxBuildCompatibility.h -Wno-multichar -fexceptions"
+set_source_files_properties(bewindow.cpp bewindow_win.cpp stubgen.cpp
+	PROPERTIES COMPILE_FLAGS
+	"-std=gnu++11 -include LinuxBuildCompatibility.h -Wno-multichar -fexceptions"
 )
 
 target_link_libraries(vitrine PRIVATE

@@ -104,7 +104,7 @@ vitrine_desktop_surface_at(struct vitrine_server *server, double x, double y,
 	struct vitrine_rootless_window *window;
 	for (int pass = 0; pass < 2; pass++) {
 		wl_list_for_each(window, &server->rootless_windows, link) {
-			if (window->window == NULL
+			if (!vitrine_rootless_window_alive(window)
 					|| window->toplevel == NULL)
 				continue;
 			struct wlr_surface *surface =

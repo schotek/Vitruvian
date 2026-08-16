@@ -31,8 +31,8 @@
 struct wlr_xwayland;
 struct wlr_xwayland_surface;
 
-/* From winhost.h (per-window helper, H1). */
-struct winhost;
+/* From winhost.h (per-window helper, H1+). */
+struct winhost_mgr;
 struct vitrine_hosted_window;
 
 struct vitrine_input {
@@ -79,7 +79,7 @@ struct vitrine_server {
 	struct wl_display *display;
 	struct wl_event_loop *event_loop;
 	BeShim *shim;
-	struct winhost *winhost;                /* per-window helper (H1 gate);
+	struct winhost_mgr *winhost;            /* per-window helper (H1 gate);
 	                                         * NULL when disabled */
 	bool rootful;
 
@@ -312,6 +312,11 @@ bool vitrine_rootless_handle_window_event(struct vitrine_server *server,
 	const BeInputEvent *ev);
 struct vitrine_rootless_window *vitrine_rootless_window_by_id(
 	struct vitrine_server *server, int win_id);
+/* True while the window has a living BeOS host (in-process OR helper).
+ * Input routing and hit-tests must use this, never `->window != NULL` —
+ * that guard excludes helper-hosted windows. */
+bool vitrine_rootless_window_alive(
+	const struct vitrine_rootless_window *window);
 
 /* xwayland.c */
 void vitrine_xwayland_init(struct vitrine_server *server);

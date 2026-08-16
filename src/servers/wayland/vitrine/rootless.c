@@ -151,11 +151,21 @@ frames_overlap(const struct vitrine_rootless_window *a,
 		&& by < ay + a->height + CLAMP_MIN_Y;
 }
 
-/* Live in either hosting mode? (Teardown NULLs both fields together.) */
+/* Live in either hosting mode? (Teardown NULLs both fields together.)
+ * Exported: every hit-test and call-site guard must treat an in-process
+ * and a helper-hosted window the same — guarding on ->window alone
+ * silently drops hosted windows (the H3 "Firefox ignores clicks" bug:
+ * pointer routing fell through to the X path and cleared focus). */
+bool
+vitrine_rootless_window_alive(const struct vitrine_rootless_window *window)
+{
+	return window->window != NULL || window->hosted != NULL;
+}
+
 static bool
 window_alive(const struct vitrine_rootless_window *window)
 {
-	return window->window != NULL || window->hosted != NULL;
+	return vitrine_rootless_window_alive(window);
 }
 
 /* Hosting-mode split for the one stacking primitive. A mixed pair (one
@@ -340,7 +350,8 @@ rootless_map(struct vitrine_toplevel *toplevel)
 	 * no-op on a NULL BeWindow, and apply_size() skips hosted windows
 	 * (resize handshake is H2). */
 	if (winhost_enabled(server)) {
-		window->hosted = winhost_create_window(server, &spec);
+		window->hosted = winhost_create_window(server, &spec,
+			xdg_toplevel->app_id);
 		if (window->hosted == NULL) {
 			free(window);
 			return;

@@ -39,17 +39,33 @@
 #include "vitrine.h"
 #include "winhost.h"
 #include "hostproto.h"
+#include "stubgen.h"
 
 #define WH_HELPER_PATH "/system/servers/vitrine_window_host"
 
+/* One helper process = one guest app identity (H3). All toplevels with
+ * the same app_id share it — BWindow::SendBehind is same-team only, so
+ * dialog-over-parent stacking needs the app's windows in one team; and
+ * one team is precisely one Deskbar row. app_id "" is the generic bucket
+ * for clients that never set one. */
 struct winhost {
-	struct vitrine_server *server;
-	int listen_fd;
+	struct winhost_mgr *mgr;
+	char *app_id;
+	char *stub;			/* spawn path (identity stub); may be
+					 * WH_HELPER_PATH for the generic bucket */
+	char *sig;			/* signature to register; NULL = default */
 	int fd;				/* helper connection; -1 until HELLO   */
 	uint64_t token;
 	pid_t pid;
 	struct wl_event_source *source;
 	struct wl_list windows;		/* vitrine_hosted_window.link */
+	struct wl_list link;		/* winhost_mgr.helpers */
+};
+
+struct winhost_mgr {
+	struct vitrine_server *server;
+	int listen_fd;
+	struct wl_list helpers;		/* winhost.link */
 };
 
 /* A framebuffer area superseded by a resize, parked until the helper acks
@@ -74,6 +90,22 @@ winhost_enabled(struct vitrine_server *server)
 		}
 	}
 	return enabled == 1;
+}
+
+/* Release one helper record. The process itself either already died
+ * (hangup path) or was told to quit (empty/finish paths). */
+static void
+winhost_helper_free(struct winhost *host)
+{
+	if (host->source != NULL)
+		wl_event_source_remove(host->source);
+	if (host->fd >= 0)
+		close(host->fd);
+	wl_list_remove(&host->link);
+	free(host->app_id);
+	free(host->stub);
+	free(host->sig);
+	free(host);
 }
 
 static const char *
@@ -124,18 +156,21 @@ static int
 winhost_handle_fd(int fd, uint32_t mask, void *data)
 {
 	struct winhost *host = data;
-	struct vitrine_server *server = host->server;
+	struct vitrine_server *server = host->mgr->server;
 
 	if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
-		wlr_log(WLR_ERROR, "winhost: helper pid %d went away",
-			(int)host->pid);
+		wlr_log(WLR_ERROR, "winhost: helper '%s' pid %d went away",
+			host->app_id, (int)host->pid);
 		wl_event_source_remove(host->source);
 		host->source = NULL;
 		close(host->fd);
 		host->fd = -1;
-		/* H1: no respawn. Proxies keep their mapped area (commits still
-		 * render into it harmlessly); the guest windows die with the
-		 * helper's team and the clients see their surfaces closed. */
+		/* No respawn (H4). A husk with live windows lingers so their
+		 * hosted->host stays valid (proxies keep their mapped area;
+		 * commits render into it harmlessly); an empty one goes now.
+		 * Either way the next window of this app spawns fresh. */
+		if (wl_list_empty(&host->windows))
+			winhost_helper_free(host);
 		return 0;
 	}
 
@@ -183,56 +218,62 @@ winhost_send(struct winhost *host, uint32_t type, uint32_t win_id,
 	return 0;
 }
 
-/* Spawn the helper and wait for its HELLO (blocking, bounded): H1 keeps
- * the handshake synchronous because it only ever runs once, on the first
- * hosted window. */
+/* Spawn one helper and wait for its HELLO (blocking, bounded): spawns are
+ * serialized on the event-loop thread and happen once per app, so the
+ * synchronous handshake stays the simplest correct thing. */
 static int
 winhost_spawn(struct winhost *host)
 {
-	struct vitrine_server *server = host->server;
+	struct winhost_mgr *mgr = host->mgr;
+	struct vitrine_server *server = mgr->server;
 
 	host->token = ((uint64_t)getpid() << 32) ^ (uint64_t)system_time();
 
-	char sockenv[300], tokenv[64];
+	char sockenv[300], tokenv[64], sigenv[320];
 	snprintf(sockenv, sizeof(sockenv), WH_SOCKET_ENV "=%s",
 		winhost_socket_path());
 	snprintf(tokenv, sizeof(tokenv), WH_TOKEN_ENV "=%llu",
 		(unsigned long long)host->token);
+	if (host->sig != NULL)
+		snprintf(sigenv, sizeof(sigenv), WH_SIG_ENV "=%s", host->sig);
 
 	/* load_image (not fork/exec): the child needs the nexus team records
 	 * registrar/app_server key on. Environment: ours plus the socket
-	 * coordinates. */
+	 * coordinates (and the stub signature, H3). */
 	extern char **environ;
 	int envc = 0;
 	while (environ[envc] != NULL)
 		envc++;
-	const char **envp = calloc(envc + 3, sizeof(char *));
+	const char **envp = calloc(envc + 4, sizeof(char *));
 	if (envp == NULL)
 		return -1;
 	for (int i = 0; i < envc; i++)
 		envp[i] = environ[i];
-	envp[envc] = sockenv;
-	envp[envc + 1] = tokenv;
-	envp[envc + 2] = NULL;
+	int extra = envc;
+	envp[extra++] = sockenv;
+	envp[extra++] = tokenv;
+	if (host->sig != NULL)
+		envp[extra++] = sigenv;
+	envp[extra] = NULL;
 
-	const char *argv[] = { WH_HELPER_PATH, NULL };
+	const char *argv[] = { host->stub, NULL };
 	thread_id team = load_image(1, argv, envp);
 	free(envp);
 	if (team < 0) {
 		wlr_log(WLR_ERROR, "winhost: load_image(%s): %s",
-			WH_HELPER_PATH, strerror(team));
+			host->stub, strerror(team));
 		return -1;
 	}
 	resume_thread(team);
 	host->pid = (pid_t)team;
 
 	/* Accept + HELLO with a 5 s budget. */
-	struct pollfd pfd = { .fd = host->listen_fd, .events = POLLIN };
+	struct pollfd pfd = { .fd = mgr->listen_fd, .events = POLLIN };
 	if (poll(&pfd, 1, 5000) <= 0) {
 		wlr_log(WLR_ERROR, "winhost: helper did not connect");
 		return -1;
 	}
-	int fd = accept4(host->listen_fd, NULL, NULL, SOCK_CLOEXEC);
+	int fd = accept4(mgr->listen_fd, NULL, NULL, SOCK_CLOEXEC);
 	if (fd < 0)
 		return -1;
 
@@ -276,19 +317,18 @@ winhost_init(struct vitrine_server *server)
 	if (!winhost_enabled(server))
 		return;
 
-	struct winhost *host = calloc(1, sizeof(*host));
-	if (host == NULL)
+	struct winhost_mgr *mgr = calloc(1, sizeof(*mgr));
+	if (mgr == NULL)
 		return;
-	host->server = server;
-	host->fd = -1;
-	host->listen_fd = -1;
-	wl_list_init(&host->windows);
+	mgr->server = server;
+	mgr->listen_fd = -1;
+	wl_list_init(&mgr->helpers);
 
 	const char *path = winhost_socket_path();
 	unlink(path);
 	int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
 	if (fd < 0) {
-		free(host);
+		free(mgr);
 		return;
 	}
 	struct sockaddr_un addr = { .sun_family = AF_UNIX };
@@ -298,41 +338,79 @@ winhost_init(struct vitrine_server *server)
 		wlr_log(WLR_ERROR, "winhost: cannot listen on %s: %s", path,
 			strerror(errno));
 		close(fd);
-		free(host);
+		free(mgr);
 		return;
 	}
-	host->listen_fd = fd;
-	server->winhost = host;
+	mgr->listen_fd = fd;
+	server->winhost = mgr;
+	vitrine_stub_gc(WH_HELPER_PATH);
 	wlr_log(WLR_INFO, "winhost: enabled, socket %s", path);
 }
 
 void
 winhost_finish(struct vitrine_server *server)
 {
-	struct winhost *host = server->winhost;
-	if (host == NULL)
+	struct winhost_mgr *mgr = server->winhost;
+	if (mgr == NULL)
 		return;
-	if (host->fd >= 0) {
-		winhost_send(host, WH_HOST_QUIT, 0, NULL, 0);
-		if (host->source != NULL)
-			wl_event_source_remove(host->source);
-		close(host->fd);
+	struct winhost *host, *tmp;
+	wl_list_for_each_safe(host, tmp, &mgr->helpers, link) {
+		if (host->fd >= 0)
+			winhost_send(host, WH_HOST_QUIT, 0, NULL, 0);
+		winhost_helper_free(host);
 	}
-	if (host->listen_fd >= 0)
-		close(host->listen_fd);
+	if (mgr->listen_fd >= 0)
+		close(mgr->listen_fd);
 	unlink(winhost_socket_path());
-	free(host);
+	free(mgr);
 	server->winhost = NULL;
 }
 
-struct vitrine_hosted_window *
-winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec)
+/* The helper team hosting `app_id` — live one reused, otherwise spawned
+ * from its identity stub (H3). NULL when spawning failed. */
+static struct winhost *
+winhost_helper_for_app(struct winhost_mgr *mgr, const char *app_id)
 {
-	struct winhost *host = server->winhost;
-	if (host == NULL || spec == NULL || spec->w <= 0 || spec->h <= 0)
+	if (app_id == NULL)
+		app_id = "";
+
+	struct winhost *host;
+	wl_list_for_each(host, &mgr->helpers, link) {
+		if (host->fd >= 0 && strcmp(host->app_id, app_id) == 0)
+			return host;
+	}
+
+	host = calloc(1, sizeof(*host));
+	if (host == NULL)
+		return NULL;
+	host->mgr = mgr;
+	host->fd = -1;
+	host->app_id = strdup(app_id);
+	host->stub = vitrine_stub_for_app(app_id, WH_HELPER_PATH, &host->sig);
+	if (host->stub == NULL) {
+		/* No app_id or no writable cache: the generic bucket. */
+		host->stub = strdup(WH_HELPER_PATH);
+	}
+	wl_list_init(&host->windows);
+	wl_list_insert(&mgr->helpers, &host->link);
+	if (host->app_id == NULL || host->stub == NULL
+			|| winhost_spawn(host) != 0) {
+		winhost_helper_free(host);
+		return NULL;
+	}
+	return host;
+}
+
+struct vitrine_hosted_window *
+winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec,
+	const char *app_id)
+{
+	struct winhost_mgr *mgr = server->winhost;
+	if (mgr == NULL || spec == NULL || spec->w <= 0 || spec->h <= 0)
 		return NULL;
 
-	if (host->fd < 0 && winhost_spawn(host) != 0)
+	struct winhost *host = winhost_helper_for_app(mgr, app_id);
+	if (host == NULL)
 		return NULL;
 
 	struct vitrine_hosted_window *hosted = calloc(1, sizeof(*hosted));
@@ -397,6 +475,16 @@ winhost_destroy_window(struct vitrine_hosted_window *hosted)
 	wl_list_remove(&hosted->link);
 	if (hosted->area >= 0)
 		delete_area(hosted->area);
+
+	/* Last window of the app gone → retire its helper team, and with it
+	 * the Deskbar row (H3). The next window of the same app_id spawns a
+	 * fresh helper from the cached stub. */
+	struct winhost *host = hosted->host;
+	if (host != NULL && wl_list_empty(&host->windows)) {
+		if (host->fd >= 0)
+			winhost_send(host, WH_HOST_QUIT, 0, NULL, 0);
+		winhost_helper_free(host);
+	}
 	free(hosted);
 }
 

@@ -43,8 +43,11 @@ bool winhost_enabled(struct vitrine_server *server);
 void winhost_init(struct vitrine_server *server);
 void winhost_finish(struct vitrine_server *server);
 
+/* app_id keys the helper team the window lands in (one team per guest app,
+ * H3); NULL/"" selects the generic bucket helper. */
 struct vitrine_hosted_window *winhost_create_window(
-	struct vitrine_server *server, const BeWindowSpec *spec);
+	struct vitrine_server *server, const BeWindowSpec *spec,
+	const char *app_id);
 void winhost_destroy_window(struct vitrine_hosted_window *hosted);
 void winhost_send_damage(struct vitrine_hosted_window *hosted,
 	int x, int y, int w, int h);

@@ -22,6 +22,7 @@
 
 #define WH_SOCKET_ENV	"VITRINE_HOST_SOCKET"
 #define WH_TOKEN_ENV	"VITRINE_HOST_TOKEN"
+#define WH_SIG_ENV	"VITRINE_HOST_SIG"	/* app signature (H3 stubs) */
 #define WH_PROTO_VERSION	2
 
 /* compositor → helper message types */
