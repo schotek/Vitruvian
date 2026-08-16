@@ -125,6 +125,71 @@ handle_destroy(int win_id)
 	delete hosted;
 }
 
+/* Control record up to the compositor (bounded-blocking, unlike the input
+ * stream): losing a RESIZE_DONE would strand the parked source area on the
+ * compositor side, so wait out a momentarily full queue instead of
+ * dropping. Runs on the reader thread — never a window looper. */
+static void
+send_control(const BeInputEvent& ev)
+{
+	for (int attempt = 0; attempt < 40; attempt++) {
+		if (send(sSocket, &ev, sizeof(ev), MSG_DONTWAIT)
+				== (ssize_t)sizeof(ev))
+			return;
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			exit(0);	/* compositor gone */
+		struct pollfd pfd = { sSocket, POLLOUT, 0 };
+		poll(&pfd, 1, 250);
+	}
+	fprintf(stderr, "window_host: control record type %d stuck, "
+		"dropped\n", (int)ev.type);
+}
+
+/* WH_WIN_RESIZE (H2): adopt the new framebuffer area the compositor sent —
+ * clone, wrap a BBitmap, swap it into the window (bewin_* does the resize
+ * under the looper lock), drop the old clone, ack. On any failure keep the
+ * old framebuffer and DON'T ack: the compositor then never deletes the old
+ * source area, so what we keep showing stays backed. */
+static void
+handle_resize(HostedWindow* hosted, const struct wh_resize* msg)
+{
+	void* bits = NULL;
+	area_id clone = clone_area("vitrine fb clone", &bits, B_ANY_ADDRESS,
+		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA,
+		(area_id)msg->area);
+	if (clone < 0) {
+		fprintf(stderr, "window_host: resize clone_area(%d): %s\n",
+			(int)msg->area, strerror(clone));
+		return;
+	}
+
+	BBitmap* bitmap = new BBitmap(clone, 0,
+		BRect(0, 0, msg->w - 1, msg->h - 1), 0, B_RGB32, msg->stride);
+	if (bitmap->InitCheck() != B_OK) {
+		fprintf(stderr, "window_host: resize BBitmap: %s\n",
+			strerror(bitmap->InitCheck()));
+		delete bitmap;
+		delete_area(clone);
+		return;
+	}
+
+	if (bewin_resize_window_with_bitmap(hosted->window, msg->w, msg->h,
+			bitmap) != 0) {
+		delete bitmap;
+		delete_area(clone);
+		return;
+	}
+	delete_area(hosted->clone);
+	hosted->clone = clone;
+
+	BeInputEvent ack = BeInputEvent();
+	ack.type = WH_BE_RESIZE_DONE;
+	ack.screen = hosted->win_id;
+	ack.x = msg->w;
+	ack.y = msg->h;
+	send_control(ack);
+}
+
 static void
 drain_socket()
 {
@@ -168,6 +233,68 @@ drain_socket()
 				bewin_blit(hosted->window, rects[i].x, rects[i].y,
 					rects[i].w, rects[i].h);
 			}
+			break;
+		}
+		case WH_WIN_MOVE: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr || hdr.len < sizeof(struct wh_move))
+				break;
+			const struct wh_move* msg = (const struct wh_move*)payload;
+			bewin_move_window(hosted->window, msg->x, msg->y);
+			break;
+		}
+		case WH_WIN_RESIZE: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr
+					|| hdr.len < sizeof(struct wh_resize))
+				break;
+			handle_resize(hosted, (const struct wh_resize*)payload);
+			break;
+		}
+		case WH_WIN_SET_TITLE: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr || hdr.len == 0)
+				break;
+			/* Payload is NUL-terminated by the sender; force it in
+			 * case a foreign compositor build disagrees. */
+			char title[256];
+			uint32_t len = hdr.len < sizeof(title)
+				? hdr.len : sizeof(title) - 1;
+			memcpy(title, payload, len);
+			title[len] = '\0';
+			bewin_set_title(hosted->window, title);
+			break;
+		}
+		case WH_WIN_SET_LIMITS: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr
+					|| hdr.len < sizeof(struct wh_limits))
+				break;
+			const struct wh_limits* msg =
+				(const struct wh_limits*)payload;
+			bewin_set_size_limits(hosted->window, msg->min_w,
+				msg->min_h, msg->max_w, msg->max_h);
+			break;
+		}
+		case WH_WIN_ACTIVATE: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr)
+				break;
+			bewin_activate(hosted->window);
+			break;
+		}
+		case WH_WIN_SEND_BEHIND: {
+			HostedWindow* hosted = window_by_id((int)hdr.win_id);
+			if (hosted == nullptr
+					|| hdr.len < sizeof(struct wh_behind))
+				break;
+			const struct wh_behind* msg =
+				(const struct wh_behind*)payload;
+			HostedWindow* behind_of =
+				window_by_id((int)msg->behind_win_id);
+			if (behind_of == nullptr)
+				break;	/* already destroyed — restack is moot */
+			bewin_send_behind(hosted->window, behind_of->window);
 			break;
 		}
 		case WH_HOST_QUIT:

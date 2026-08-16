@@ -49,6 +49,14 @@ struct winhost {
 	uint64_t token;
 	pid_t pid;
 	struct wl_event_source *source;
+	struct wl_list windows;		/* vitrine_hosted_window.link */
+};
+
+/* A framebuffer area superseded by a resize, parked until the helper acks
+ * the swap (winhost.h old_areas docs). */
+struct winhost_old_area {
+	int32_t area;
+	struct wl_list link;
 };
 
 bool
@@ -80,9 +88,38 @@ winhost_socket_path(void)
 	return path;
 }
 
-/* One helper→compositor record. Type >= WH_BE_BASE is host control (H1:
- * HELLO only, handled in the accept path); everything else is window
- * input for the shared dispatch. */
+/* WH_BE_RESIZE_DONE: the helper swapped to the area sent in the matching
+ * WH_WIN_RESIZE and dropped its clone of the previous one — the oldest
+ * parked source area is now unreferenced on the helper side. Acks arrive
+ * in send order (single SEQPACKET stream), so FIFO matching is exact. */
+static void
+winhost_handle_resize_done(struct winhost *host, const BeInputEvent *ev)
+{
+	struct vitrine_hosted_window *hosted;
+	wl_list_for_each(hosted, &host->windows, link) {
+		if (hosted->win_id != (int)ev->screen)
+			continue;
+		if (wl_list_empty(&hosted->old_areas)) {
+			wlr_log(WLR_ERROR,
+				"winhost: stray RESIZE_DONE for win %d",
+				hosted->win_id);
+			return;
+		}
+		struct winhost_old_area *old = wl_container_of(
+			hosted->old_areas.next, old, link);
+		wl_list_remove(&old->link);
+		delete_area(old->area);
+		free(old);
+		wlr_log(WLR_DEBUG, "winhost: win %d resize acked (%dx%d)",
+			hosted->win_id, ev->x, ev->y);
+		return;
+	}
+	/* Window already destroyed — its areas went with it. */
+}
+
+/* One helper→compositor record. Type >= WH_BE_BASE is host control
+ * (RESIZE_DONE; HELLO is handled in the accept path); everything else is
+ * window input for the shared dispatch. */
 static int
 winhost_handle_fd(int fd, uint32_t mask, void *data)
 {
@@ -106,8 +143,12 @@ winhost_handle_fd(int fd, uint32_t mask, void *data)
 	ssize_t n;
 	while ((n = recv(fd, &ev, sizeof(ev), MSG_DONTWAIT))
 			== (ssize_t)sizeof(ev)) {
+		if (ev.type == WH_BE_RESIZE_DONE) {
+			winhost_handle_resize_done(host, &ev);
+			continue;
+		}
 		if (ev.type >= WH_BE_BASE)
-			continue;	/* control record; none expected post-HELLO */
+			continue;	/* unknown control record */
 		vitrine_input_dispatch(server, &ev);
 	}
 	return 0;
@@ -241,6 +282,7 @@ winhost_init(struct vitrine_server *server)
 	host->server = server;
 	host->fd = -1;
 	host->listen_fd = -1;
+	wl_list_init(&host->windows);
 
 	const char *path = winhost_socket_path();
 	unlink(path);
@@ -302,6 +344,7 @@ winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec)
 	hosted->height = spec->h;
 	hosted->stride = spec->w * 4;
 	hosted->host = host;
+	wl_list_init(&hosted->old_areas);
 
 	char name[64];
 	snprintf(name, sizeof(name), "vitrine fb %d", spec->win_id);
@@ -333,6 +376,7 @@ winhost_create_window(struct vitrine_server *server, const BeWindowSpec *spec)
 		free(hosted);
 		return NULL;
 	}
+	wl_list_insert(&host->windows, &hosted->link);
 	return hosted;
 }
 
@@ -344,6 +388,13 @@ winhost_destroy_window(struct vitrine_hosted_window *hosted)
 	if (hosted->host != NULL)
 		winhost_send(hosted->host, WH_WIN_DESTROY, hosted->win_id,
 			NULL, 0);
+	struct winhost_old_area *old, *tmp;
+	wl_list_for_each_safe(old, tmp, &hosted->old_areas, link) {
+		wl_list_remove(&old->link);
+		delete_area(old->area);
+		free(old);
+	}
+	wl_list_remove(&hosted->link);
 	if (hosted->area >= 0)
 		delete_area(hosted->area);
 	free(hosted);
@@ -358,4 +409,112 @@ winhost_send_damage(struct vitrine_hosted_window *hosted, int x, int y,
 	struct wh_rect rect = { x, y, w, h };
 	winhost_send(hosted->host, WH_WIN_DAMAGE, hosted->win_id, &rect,
 		sizeof(rect));
+}
+
+/* ---- H2 window operations ---- */
+
+void
+winhost_move_window(struct vitrine_hosted_window *hosted, int x, int y)
+{
+	if (hosted == NULL || hosted->host == NULL)
+		return;
+	struct wh_move msg = { x, y };
+	winhost_send(hosted->host, WH_WIN_MOVE, hosted->win_id, &msg,
+		sizeof(msg));
+}
+
+int
+winhost_resize_window(struct vitrine_hosted_window *hosted, int w, int h)
+{
+	if (hosted == NULL || hosted->host == NULL || w <= 0 || h <= 0)
+		return -1;
+	struct winhost *host = hosted->host;
+	if (host->fd < 0)
+		return -1;
+
+	struct winhost_old_area *old = calloc(1, sizeof(*old));
+	if (old == NULL)
+		return -1;
+
+	char name[64];
+	snprintf(name, sizeof(name), "vitrine fb %d", hosted->win_id);
+	void *bits = NULL;
+	int32_t stride = w * 4;
+	area_id area = create_area(name, &bits, B_ANY_ADDRESS,
+		(size_t)stride * h, B_NO_LOCK,
+		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA);
+	if (area < 0) {
+		wlr_log(WLR_ERROR, "winhost: resize create_area: %s",
+			strerror(area));
+		free(old);
+		return -1;
+	}
+	memset(bits, 0, (size_t)stride * h);
+
+	struct wh_resize msg = { w, h, stride, (int32_t)area };
+	if (winhost_send(host, WH_WIN_RESIZE, hosted->win_id, &msg,
+			sizeof(msg)) != 0) {
+		/* Dropped (queue full / helper dead): stay at the old size —
+		 * the caller must not resize the wlr output either. */
+		delete_area(area);
+		free(old);
+		return -1;
+	}
+
+	/* Flip the compositor side immediately: SEQPACKET ordering guarantees
+	 * the helper processes the swap before any damage we send afterwards.
+	 * The superseded source area is parked until RESIZE_DONE. */
+	old->area = hosted->area;
+	wl_list_insert(hosted->old_areas.prev, &old->link);
+	hosted->area = area;
+	hosted->bits = bits;
+	hosted->stride = stride;
+	hosted->width = w;
+	hosted->height = h;
+	return 0;
+}
+
+void
+winhost_set_title(struct vitrine_hosted_window *hosted, const char *title)
+{
+	if (hosted == NULL || hosted->host == NULL)
+		return;
+	char buf[256];
+	snprintf(buf, sizeof(buf), "%s", title != NULL ? title : "");
+	winhost_send(hosted->host, WH_WIN_SET_TITLE, hosted->win_id, buf,
+		(uint32_t)strlen(buf) + 1);
+}
+
+void
+winhost_set_limits(struct vitrine_hosted_window *hosted, int min_w, int min_h,
+	int max_w, int max_h)
+{
+	if (hosted == NULL || hosted->host == NULL)
+		return;
+	struct wh_limits msg = { min_w, min_h, max_w, max_h };
+	winhost_send(hosted->host, WH_WIN_SET_LIMITS, hosted->win_id, &msg,
+		sizeof(msg));
+}
+
+void
+winhost_activate(struct vitrine_hosted_window *hosted)
+{
+	if (hosted == NULL || hosted->host == NULL)
+		return;
+	winhost_send(hosted->host, WH_WIN_ACTIVATE, hosted->win_id, NULL, 0);
+}
+
+void
+winhost_send_behind(struct vitrine_hosted_window *hosted,
+	struct vitrine_hosted_window *behind_of)
+{
+	if (hosted == NULL || behind_of == NULL || hosted->host == NULL)
+		return;
+	if (hosted->host != behind_of->host)
+		return;	/* different helper teams cannot restack (app_server
+			 * SendBehind is same-team); cannot happen while H1
+			 * runs a single helper */
+	struct wh_behind msg = { behind_of->win_id };
+	winhost_send(hosted->host, WH_WIN_SEND_BEHIND, hosted->win_id, &msg,
+		sizeof(msg));
 }

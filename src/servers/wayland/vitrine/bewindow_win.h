@@ -43,6 +43,11 @@ void  bewin_move_window(BeWindow* win, int x, int y);
 void* bewin_window_bits(BeWindow* win, int* bytes_per_row);
 void  bewin_blit(BeWindow* win, int x, int y, int w, int h);
 void  bewin_resize_window(BeWindow* win, int w, int h);
+/* H2 helper path: swap in a caller-built framebuffer (BBitmap over a cloned
+ * nexus area) while resizing. No same-size early-out. Returns 0 when the
+ * window adopted the bitmap; on failure the caller still owns it. */
+int   bewin_resize_window_with_bitmap(BeWindow* win, int w, int h,
+	BBitmap* bitmap);
 void  bewin_destroy_window(BeWindow* win);
 void  bewin_set_size_limits(BeWindow* win, int min_w, int min_h,
 	int max_w, int max_h);

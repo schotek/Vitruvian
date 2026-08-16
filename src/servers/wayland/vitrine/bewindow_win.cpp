@@ -638,21 +638,14 @@ void bewin_blit(BeWindow* win, int x, int y, int w, int h)
     }
 }
 
-void bewin_resize_window(BeWindow* win, int w, int h)
+/* Shared swap body: adopt `newBitmap` as the window's framebuffer and
+ * resize the window to match. Always swaps — even at an unchanged size —
+ * because the helper path hands in a bitmap over a fresh cloned area whose
+ * predecessor is about to be deleted. Ownership transfers: the old bitmap
+ * is deleted here, the new one belongs to the BeWindow afterwards. */
+static void bewin_swap_framebuffer(BeWindow* win, int w, int h,
+                                   BBitmap* newBitmap)
 {
-    if (!win || !win->window || w <= 0 || h <= 0)
-        return;
-    if (w == win->width && h == win->height)
-        return;
-
-    /* Allocate the new shadow framebuffer first (unlocked — may be slow). */
-    BBitmap* newBitmap = new BBitmap(BRect(0, 0, w - 1, h - 1), B_RGB32,
-        false);
-    if (newBitmap->InitCheck() != B_OK || newBitmap->Bits() == nullptr) {
-        delete newBitmap;
-        return;     /* keep the old framebuffer; X side keeps old size */
-    }
-
     BBitmap* oldBitmap = win->bitmap;
     if (win->window->LockLooper()) {
         /* Swap under the window lock: the window thread only touches the
@@ -692,6 +685,37 @@ void bewin_resize_window(BeWindow* win, int w, int h)
     /* The X side calls beshim_window_bits() again after this returns; the
      * fresh bitmap content is undefined until the first full-screen blit
      * (X repaints everything after a RANDR resize). */
+}
+
+void bewin_resize_window(BeWindow* win, int w, int h)
+{
+    if (!win || !win->window || w <= 0 || h <= 0)
+        return;
+    if (w == win->width && h == win->height)
+        return;
+
+    /* Allocate the new shadow framebuffer first (unlocked — may be slow). */
+    BBitmap* newBitmap = new BBitmap(BRect(0, 0, w - 1, h - 1), B_RGB32,
+        false);
+    if (newBitmap->InitCheck() != B_OK || newBitmap->Bits() == nullptr) {
+        delete newBitmap;
+        return;     /* keep the old framebuffer; X side keeps old size */
+    }
+    bewin_swap_framebuffer(win, w, h, newBitmap);
+}
+
+/* Helper-process resize half (H2): the caller supplies the replacement
+ * framebuffer (a BBitmap over a freshly cloned nexus area). Unlike
+ * bewin_resize_window there is no same-size early-out — the point is the
+ * bitmap swap itself. Returns 0 once the window owns the new bitmap; on
+ * failure the caller keeps ownership. */
+int bewin_resize_window_with_bitmap(BeWindow* win, int w, int h,
+                                    BBitmap* bitmap)
+{
+    if (!win || !win->window || w <= 0 || h <= 0 || bitmap == nullptr)
+        return -1;
+    bewin_swap_framebuffer(win, w, h, bitmap);
+    return 0;
 }
 
 void bewin_destroy_window(BeWindow* win)

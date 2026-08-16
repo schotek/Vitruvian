@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <wayland-server-core.h>
+
 #include "bewindow.h"
 
 struct vitrine_server;
@@ -28,6 +30,13 @@ struct vitrine_hosted_window {
 	int stride;
 	int width, height;
 	struct winhost *host;		/* NULL after the helper died */
+	struct wl_list link;		/* winhost.windows */
+	/* Superseded framebuffer areas (H2 resize): each WH_WIN_RESIZE parks
+	 * the previous area here and the matching WH_BE_RESIZE_DONE — acks
+	 * come back in send order — deletes the oldest. Never deleting a
+	 * source area the helper hasn't re-cloned past keeps us independent
+	 * of clone-outlives-source semantics. */
+	struct wl_list old_areas;	/* winhost_old_area.link, oldest first */
 };
 
 bool winhost_enabled(struct vitrine_server *server);
@@ -39,5 +48,20 @@ struct vitrine_hosted_window *winhost_create_window(
 void winhost_destroy_window(struct vitrine_hosted_window *hosted);
 void winhost_send_damage(struct vitrine_hosted_window *hosted,
 	int x, int y, int w, int h);
+
+/* H2 window operations — the hosted mirrors of the beshim_* calls. All of
+ * them quietly no-op once the helper is gone. */
+void winhost_move_window(struct vitrine_hosted_window *hosted, int x, int y);
+/* Area-swap resize: creates the new framebuffer, flips the compositor-side
+ * mapping and sends WH_WIN_RESIZE. Returns 0 on success — only then may the
+ * caller resize the wlr output; on failure the old size stays authoritative. */
+int winhost_resize_window(struct vitrine_hosted_window *hosted, int w, int h);
+void winhost_set_title(struct vitrine_hosted_window *hosted,
+	const char *title);
+void winhost_set_limits(struct vitrine_hosted_window *hosted,
+	int min_w, int min_h, int max_w, int max_h);
+void winhost_activate(struct vitrine_hosted_window *hosted);
+void winhost_send_behind(struct vitrine_hosted_window *hosted,
+	struct vitrine_hosted_window *behind_of);
 
 #endif	/* VITRINE_WINHOST_H */

@@ -11,6 +11,7 @@
 #include <wlr/util/log.h>
 
 #include "vitrine.h"
+#include "winhost.h"
 
 static void
 toplevel_handle_commit(struct wl_listener *listener, void *data)
@@ -64,7 +65,12 @@ toplevel_handle_set_title(struct wl_listener *listener, void *data)
 	struct vitrine_toplevel *toplevel =
 		wl_container_of(listener, toplevel, set_title);
 
-	if (toplevel->rootless != NULL && toplevel->rootless->window != NULL)
+	if (toplevel->rootless == NULL)
+		return;
+	if (toplevel->rootless->hosted != NULL)
+		winhost_set_title(toplevel->rootless->hosted,
+			toplevel->toplevel->title);
+	else if (toplevel->rootless->window != NULL)
 		beshim_set_title(toplevel->rootless->window,
 			toplevel->toplevel->title);
 }

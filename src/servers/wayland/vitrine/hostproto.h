@@ -22,7 +22,7 @@
 
 #define WH_SOCKET_ENV	"VITRINE_HOST_SOCKET"
 #define WH_TOKEN_ENV	"VITRINE_HOST_TOKEN"
-#define WH_PROTO_VERSION	1
+#define WH_PROTO_VERSION	2
 
 /* compositor → helper message types */
 enum {
@@ -30,6 +30,18 @@ enum {
 	WH_WIN_DESTROY,		/* no payload                                 */
 	WH_WIN_DAMAGE,		/* payload: wh_rect[header.len/sizeof(wh_rect)] */
 	WH_HOST_QUIT,		/* no payload; helper exits                   */
+	/* H2: the compositor-driven window operations. */
+	WH_WIN_MOVE,		/* payload: struct wh_move                    */
+	WH_WIN_RESIZE,		/* payload: struct wh_resize — a NEW framebuffer
+				 * area; the helper clones it, swaps its BBitmap
+				 * under the window lock, drops the old clone and
+				 * acks with WH_BE_RESIZE_DONE (the compositor
+				 * deletes the old source area only then).      */
+	WH_WIN_SET_TITLE,	/* payload: NUL-terminated title (len incl. NUL) */
+	WH_WIN_SET_LIMITS,	/* payload: struct wh_limits                  */
+	WH_WIN_ACTIVATE,	/* no payload                                 */
+	WH_WIN_SEND_BEHIND,	/* payload: struct wh_behind; header.win_id
+				 * goes behind that window (same helper team) */
 };
 
 struct wh_header {
@@ -51,11 +63,32 @@ struct wh_rect {
 	int32_t x, y, w, h;
 };
 
+struct wh_move {
+	int32_t x, y;
+};
+
+struct wh_resize {
+	int32_t w, h;
+	int32_t stride;		/* bytes per row of the new area */
+	int32_t area;		/* nexus area_id of the new framebuffer */
+};
+
+struct wh_limits {
+	int32_t min_w, min_h;	/* <= 0 = unconstrained */
+	int32_t max_w, max_h;
+};
+
+struct wh_behind {
+	int32_t behind_win_id;
+};
+
 /* helper → compositor: BeInputEvent.type values >= WH_BE_BASE are host
  * control records, not input. */
 enum {
 	WH_BE_BASE = 100,
 	WH_BE_HELLO = 100,	/* code = WH_PROTO_VERSION, x/y = token lo/hi */
+	WH_BE_RESIZE_DONE,	/* screen = win_id, x/y = acked w/h; the old
+				 * framebuffer area may be deleted now       */
 };
 
 #endif	/* VITRINE_HOSTPROTO_H */

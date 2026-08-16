@@ -151,6 +151,27 @@ frames_overlap(const struct vitrine_rootless_window *a,
 		&& by < ay + a->height + CLAMP_MIN_Y;
 }
 
+/* Live in either hosting mode? (Teardown NULLs both fields together.) */
+static bool
+window_alive(const struct vitrine_rootless_window *window)
+{
+	return window->window != NULL || window->hosted != NULL;
+}
+
+/* Hosting-mode split for the one stacking primitive. A mixed pair (one
+ * in-process, one helper-hosted) cannot be restacked — app_server's
+ * SendBehind is same-team — and can only arise transiently around a gate
+ * flip, so it is silently skipped. */
+static void
+send_window_behind(struct vitrine_rootless_window *window,
+	struct vitrine_rootless_window *behind_of)
+{
+	if (window->window != NULL && behind_of->window != NULL)
+		beshim_send_behind(window->window, behind_of->window);
+	else if (window->hosted != NULL && behind_of->hosted != NULL)
+		winhost_send_behind(window->hosted, behind_of->hosted);
+}
+
 /* Put `window` behind every transient child it actually covers, depth-first
  * so a dialog's own dialog keeps its place too. The xdg protocol rejects
  * parent loops (wlr_xdg_toplevel_set_parent), but the depth bound makes
@@ -166,12 +187,12 @@ frames_overlap(const struct vitrine_rootless_window *a,
 static void
 raise_children_above(struct vitrine_rootless_window *window, int depth)
 {
-	if (window->window == NULL || depth > 8)
+	if (!window_alive(window) || depth > 8)
 		return;
 
 	struct vitrine_rootless_window *child;
 	wl_list_for_each(child, &window->server->rootless_windows, link) {
-		if (child == window || child->window == NULL)
+		if (child == window || !window_alive(child))
 			continue;
 		if (parent_window_of(child) != window)
 			continue;
@@ -179,7 +200,7 @@ raise_children_above(struct vitrine_rootless_window *window, int depth)
 			continue;
 		wlr_log(WLR_DEBUG, "restack: win %d behind its child %d",
 			window->win_id, child->win_id);
-		beshim_send_behind(window->window, child->window);
+		send_window_behind(window, child);
 		raise_children_above(child, depth + 1);
 	}
 }
@@ -189,24 +210,21 @@ raise_children_above(struct vitrine_rootless_window *window, int depth)
 static void
 apply_size(struct vitrine_rootless_window *window, int w, int h)
 {
-	if (window->hosted != NULL) {
-		/* H1: the shared-area resize handshake (new area + swap ack)
-		 * is phase H2; until then hosted windows keep their map size. */
-		static bool warned;
-		if (!warned) {
-			wlr_log(WLR_INFO,
-				"winhost: resize deferred to H2, keeping size");
-			warned = true;
-		}
-		return;
-	}
-	if (w <= 0 || h <= 0 || window->window == NULL)
+	if (w <= 0 || h <= 0 || !window_alive(window))
 		return;
 	if (w == window->width && h == window->height)
 		return;
+	if (window->hosted != NULL) {
+		/* H2 area-swap handshake: only a successfully sent swap may
+		 * resize the output — otherwise the compositor would render a
+		 * size the shared framebuffer doesn't have. */
+		if (winhost_resize_window(window->hosted, w, h) != 0)
+			return;
+	} else {
+		beshim_resize_window(window->window, w, h);
+	}
 	window->width = w;
 	window->height = h;
-	beshim_resize_window(window->window, w, h);
 	vitrine_output_resize(window->output, w, h);
 }
 
@@ -366,8 +384,13 @@ rootless_map(struct vitrine_toplevel *toplevel)
 	 * decorator, but B_NOT_RESIZABLE is only chosen at creation; equal
 	 * limits pin the size, which is the same thing in practice). */
 	struct wlr_xdg_toplevel_state *state = &xdg_toplevel->current;
-	beshim_set_size_limits(window->window, state->min_width,
-		state->min_height, state->max_width, state->max_height);
+	if (window->hosted != NULL)
+		winhost_set_limits(window->hosted, state->min_width,
+			state->min_height, state->max_width,
+			state->max_height);
+	else
+		beshim_set_size_limits(window->window, state->min_width,
+			state->min_height, state->max_width, state->max_height);
 
 	wl_list_insert(&server->rootless_windows, &window->link);
 	toplevel->rootless = window;
@@ -379,8 +402,8 @@ rootless_map(struct vitrine_toplevel *toplevel)
 	 * say it explicitly — the parent may be raised between our create and
 	 * the first user interaction. */
 	struct vitrine_rootless_window *parent = parent_window_of(window);
-	if (parent != NULL && parent->window != NULL)
-		beshim_send_behind(parent->window, window->window);
+	if (parent != NULL && window_alive(parent))
+		send_window_behind(parent, window);
 
 	wlr_log(WLR_INFO, "rootless window %d: %dx%d at %d,%d (%s), parent %d",
 		window->win_id, geo.width, geo.height, window->x, window->y,
@@ -393,7 +416,7 @@ static void
 rootless_commit(struct vitrine_toplevel *toplevel)
 {
 	struct vitrine_rootless_window *window = toplevel->rootless;
-	if (window == NULL || window->window == NULL)
+	if (window == NULL || !window_alive(window))
 		return;
 
 	struct wlr_xdg_surface *base = toplevel->toplevel->base;
@@ -571,12 +594,12 @@ void
 vitrine_rootless_toplevel_set_parent(struct vitrine_toplevel *toplevel)
 {
 	struct vitrine_rootless_window *window = toplevel->rootless;
-	if (window == NULL || window->window == NULL)
+	if (window == NULL || !window_alive(window))
 		return;
 
 	struct vitrine_rootless_window *parent = parent_window_of(window);
-	if (parent != NULL && parent->window != NULL)
-		beshim_send_behind(parent->window, window->window);
+	if (parent != NULL && window_alive(parent))
+		send_window_behind(parent, window);
 }
 
 void
