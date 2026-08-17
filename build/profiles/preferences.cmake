@@ -5,6 +5,7 @@ set(SYSTEM_PREFERENCES_TARGETS
 	Bluetooth
 	DataTranslations
 	Deskbar_prefs
+	EdgeSnap
 	FileTypes
 	Input
 	Keymap
@@ -25,6 +26,7 @@ set(SYSTEM_PREFERENCES
 	Bluetooth
 	DataTranslations
 	Deskbar
+	EdgeSnap
 	FileTypes
 	Input
 	Keymap

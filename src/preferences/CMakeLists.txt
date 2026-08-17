@@ -4,6 +4,7 @@ add_subdirectory(appearance)
 add_subdirectory(backgrounds)
 add_subdirectory(datatranslations)
 add_subdirectory(deskbar)
+add_subdirectory(edgesnap)
 add_subdirectory(filetypes)
 add_subdirectory(input)
 #add_subdirectory(joysticks)    # needs device kit
