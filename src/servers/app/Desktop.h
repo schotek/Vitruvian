@@ -39,6 +39,7 @@
 #include "Screen.h"
 #include "ScreenManager.h"
 #include "ServerCursor.h"
+#include "EdgeSnap.h"
 #include "StackAndTile.h"
 #include "VirtualScreen.h"
 #include "WindowList.h"
@@ -383,6 +384,7 @@ private:
 			Window*				fBack;
 
 			StackAndTile		fStackAndTile;
+			EdgeSnap			fEdgeSnap;
 
 			BMessage			fPendingColors;
 };

@@ -459,6 +459,7 @@ Desktop::Desktop(uid_t userID, const char* targetScreen)
 
 	// register listeners
 	RegisterListener(&fStackAndTile);
+	RegisterListener(&fEdgeSnap);
 
 	const DesktopListenerList& newListeners
 		= gDecorManager.GetDesktopListeners();

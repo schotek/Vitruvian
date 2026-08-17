@@ -66,8 +66,9 @@ public:
 	virtual	status_t		ReadBitmap(ServerBitmap *bitmap, bool drawCursor,
 								BRect bounds);
 
-	// clipping for all drawing functions, passing a NULL region
-	// will remove any clipping (drawing allowed everywhere)
+	// clipping for all drawing functions; the region must be non-NULL
+	// (Painter::ConstrainClipping dereferences it unconditionally) — to
+	// draw everywhere, constrain to the frame buffer bounds instead
 	virtual	void			ConstrainClippingRegion(const BRegion* region);
 
 	virtual	void			SetDrawState(const DrawState* state,

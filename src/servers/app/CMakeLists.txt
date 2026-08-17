@@ -138,6 +138,8 @@ Server(
 		stackandtile/Stacking.cpp
 		stackandtile/Tiling.cpp
 
+		edgesnap/EdgeSnap.cpp
+
 	LIBS localestub shared agg icon linprog ${FREETYPE_LIBRARY}
 		${UDEV_LIBRARIES} ${DRM_LIBRARIES} ${SEAT_LIBRARIES}
 		${LIBEVDEV_LIBRARIES} ${GBM_LIBRARIES} backlight
@@ -158,6 +160,7 @@ Server(
 	"./drawing/interface/remote"
 	"./font"
 	"./stackandtile"
+	"./edgesnap"
 	"./decorator"
 	"./drawing/Painter"
 	"./drawing/Painter/drawing_modes"
