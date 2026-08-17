@@ -219,6 +219,16 @@ struct DefaultWindowBehaviour::DragState : MouseTrackingState {
 	{
 	}
 
+	virtual void EnterState(State* previousState)
+	{
+		fBehavior.fIsDragging = true;
+	}
+
+	virtual void ExitState(State* nextState)
+	{
+		fBehavior.fIsDragging = false;
+	}
+
 	virtual bool MouseDown(BMessage* message, BPoint where, bool& _unhandled)
 	{
 		// right-click while dragging shall bring the window to front
@@ -266,10 +276,12 @@ struct DefaultWindowBehaviour::ResizeState : MouseTrackingState {
 
 	virtual void EnterState(State* prevState)
 	{
+		fBehavior.fIsResizing = true;
 	}
 
 	virtual void ExitState(State* nextState)
 	{
+		fBehavior.fIsResizing = false;
 		if ((fWindow->Flags() & B_OUTLINE_RESIZE) != 0) {
 			fDesktop->SetWindowOutlinesDelta(fWindow, BPoint(0, 0));
 			fDesktop->ResizeWindowBy(fWindow, fDelta.x, fDelta.y);
@@ -442,11 +454,13 @@ struct DefaultWindowBehaviour::ResizeBorderState : MouseTrackingState {
 			if ((fWindow->Flags() & B_NOT_V_RESIZABLE) != 0)
 				fVertical = NONE;
 		}
+		fBehavior.fIsResizing = fHorizontal != NONE || fVertical != NONE;
 		fBehavior._SetResizeCursor(fHorizontal, fVertical);
 	}
 
 	virtual void ExitState(State* nextState)
 	{
+		fBehavior.fIsResizing = false;
 		fBehavior._ResetResizeCursor();
 
 		if (fWindow->Flags() & B_OUTLINE_RESIZE) {
