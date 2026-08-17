@@ -32,6 +32,7 @@ enum {
 	kAppearanceSettings	= 0x04,
 	kMouseSettings		= 0x08,
 	kDraggerSettings	= 0x10,
+	kEdgeSnapSettings	= 0x20,
 };
 
 
@@ -61,6 +62,10 @@ public:
 										== B_CLICK_TO_FOCUS_MOUSE; }
 
 			bool				AcceptFirstClick() const;
+
+			bool				EdgeSnapEnabled() const;
+			edge_snap_modifier	EdgeSnapModifier() const;
+			edge_snap_sensitivity	EdgeSnapSensitivity() const;
 
 			bool				ShowAllDraggers() const;
 
@@ -99,6 +104,12 @@ public:
 			void				SetFocusFollowsMouseMode(
 									mode_focus_follows_mouse mode);
 			void				SetAcceptFirstClick(bool acceptFirstClick);
+
+			void				SetEdgeSnapEnabled(bool enabled);
+			void				SetEdgeSnapModifier(
+									edge_snap_modifier modifier);
+			void				SetEdgeSnapSensitivity(
+									edge_snap_sensitivity sensitivity);
 
 			void				SetShowAllDraggers(bool show);
 

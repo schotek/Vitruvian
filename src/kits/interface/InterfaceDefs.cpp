@@ -1309,6 +1309,84 @@ accept_first_click()
 }
 
 
+void
+set_edge_snap_enabled(bool enabled)
+{
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_SET_EDGE_SNAP_ENABLED);
+	link.Attach<bool>(enabled);
+	link.Flush();
+}
+
+
+bool
+edge_snap_enabled()
+{
+	bool enabled = true;
+
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_GET_EDGE_SNAP_ENABLED);
+
+	int32 code;
+	if (link.FlushWithReply(code) == B_OK && code == B_OK)
+		link.Read<bool>(&enabled);
+
+	return enabled;
+}
+
+
+void
+set_edge_snap_modifier(edge_snap_modifier modifier)
+{
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_SET_EDGE_SNAP_MODIFIER);
+	link.Attach<edge_snap_modifier>(modifier);
+	link.Flush();
+}
+
+
+edge_snap_modifier
+get_edge_snap_modifier()
+{
+	edge_snap_modifier modifier = B_EDGE_SNAP_MODIFIER_NONE;
+
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_GET_EDGE_SNAP_MODIFIER);
+
+	int32 code;
+	if (link.FlushWithReply(code) == B_OK && code == B_OK)
+		link.Read<edge_snap_modifier>(&modifier);
+
+	return modifier;
+}
+
+
+void
+set_edge_snap_sensitivity(edge_snap_sensitivity sensitivity)
+{
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_SET_EDGE_SNAP_SENSITIVITY);
+	link.Attach<edge_snap_sensitivity>(sensitivity);
+	link.Flush();
+}
+
+
+edge_snap_sensitivity
+get_edge_snap_sensitivity()
+{
+	edge_snap_sensitivity sensitivity = B_EDGE_SNAP_SENSITIVITY_MEDIUM;
+
+	BPrivate::AppServerLink link;
+	link.StartMessage(AS_GET_EDGE_SNAP_SENSITIVITY);
+
+	int32 code;
+	if (link.FlushWithReply(code) == B_OK && code == B_OK)
+		link.Read<edge_snap_sensitivity>(&sensitivity);
+
+	return sensitivity;
+}
+
+
 rgb_color
 ui_color(color_which which)
 {

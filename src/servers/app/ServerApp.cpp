@@ -1521,6 +1521,108 @@ ServerApp::_DispatchMessage(int32 code, BPrivate::LinkReceiver& link)
 			break;
 		}
 
+		case AS_SET_EDGE_SNAP_ENABLED:
+		{
+			STRACE(("ServerApp %s: Set Edge Snap Enabled\n", Signature()));
+
+			// Attached Data:
+			// 1) bool enabled
+
+			bool enabled;
+			if (link.Read<bool>(&enabled) == B_OK) {
+				LockedDesktopSettings settings(fDesktop);
+				settings.SetEdgeSnapEnabled(enabled);
+			}
+			break;
+		}
+
+		case AS_GET_EDGE_SNAP_ENABLED:
+		{
+			STRACE(("ServerApp %s: Get Edge Snap Enabled\n", Signature()));
+
+			if (fDesktop->LockSingleWindow()) {
+				DesktopSettings settings(fDesktop);
+
+				fLink.StartMessage(B_OK);
+				fLink.Attach<bool>(settings.EdgeSnapEnabled());
+
+				fDesktop->UnlockSingleWindow();
+			} else
+				fLink.StartMessage(B_ERROR);
+
+			fLink.Flush();
+			break;
+		}
+
+		case AS_SET_EDGE_SNAP_MODIFIER:
+		{
+			STRACE(("ServerApp %s: Set Edge Snap Modifier\n", Signature()));
+
+			// Attached Data:
+			// 1) edge_snap_modifier modifier
+
+			edge_snap_modifier modifier;
+			if (link.Read<edge_snap_modifier>(&modifier) == B_OK) {
+				LockedDesktopSettings settings(fDesktop);
+				settings.SetEdgeSnapModifier(modifier);
+			}
+			break;
+		}
+
+		case AS_GET_EDGE_SNAP_MODIFIER:
+		{
+			STRACE(("ServerApp %s: Get Edge Snap Modifier\n", Signature()));
+
+			if (fDesktop->LockSingleWindow()) {
+				DesktopSettings settings(fDesktop);
+
+				fLink.StartMessage(B_OK);
+				fLink.Attach<edge_snap_modifier>(settings.EdgeSnapModifier());
+
+				fDesktop->UnlockSingleWindow();
+			} else
+				fLink.StartMessage(B_ERROR);
+
+			fLink.Flush();
+			break;
+		}
+
+		case AS_SET_EDGE_SNAP_SENSITIVITY:
+		{
+			STRACE(("ServerApp %s: Set Edge Snap Sensitivity\n",
+				Signature()));
+
+			// Attached Data:
+			// 1) edge_snap_sensitivity sensitivity
+
+			edge_snap_sensitivity sensitivity;
+			if (link.Read<edge_snap_sensitivity>(&sensitivity) == B_OK) {
+				LockedDesktopSettings settings(fDesktop);
+				settings.SetEdgeSnapSensitivity(sensitivity);
+			}
+			break;
+		}
+
+		case AS_GET_EDGE_SNAP_SENSITIVITY:
+		{
+			STRACE(("ServerApp %s: Get Edge Snap Sensitivity\n",
+				Signature()));
+
+			if (fDesktop->LockSingleWindow()) {
+				DesktopSettings settings(fDesktop);
+
+				fLink.StartMessage(B_OK);
+				fLink.Attach<edge_snap_sensitivity>(
+					settings.EdgeSnapSensitivity());
+
+				fDesktop->UnlockSingleWindow();
+			} else
+				fLink.StartMessage(B_ERROR);
+
+			fLink.Flush();
+			break;
+		}
+
 		case AS_GET_SHOW_ALL_DRAGGERS:
 		{
 			STRACE(("ServerApp %s: Get Show All Draggers\n", Signature()));

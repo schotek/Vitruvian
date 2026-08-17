@@ -56,6 +56,9 @@ DesktopSettingsPrivate::_SetDefaults()
 	fMouseMode = B_NORMAL_MOUSE;
 	fFocusFollowsMouseMode = B_NORMAL_FOCUS_FOLLOWS_MOUSE;
 	fAcceptFirstClick = true;
+	fEdgeSnapEnabled = true;
+	fEdgeSnapModifier = B_EDGE_SNAP_MODIFIER_NONE;
+	fEdgeSnapSensitivity = B_EDGE_SNAP_SENSITIVITY_MEDIUM;
 	fShowAllDraggers = true;
 
 	// init scrollbar info
@@ -222,6 +225,36 @@ DesktopSettingsPrivate::_Load()
 			if (settings.FindBool("accept first click", &acceptFirstClick)
 					== B_OK) {
 				fAcceptFirstClick = acceptFirstClick;
+			}
+		}
+	}
+
+	// read edge snap settings
+
+	path = basePath;
+	path.Append("edge_snap");
+
+	status = file.SetTo(path.Path(), B_READ_ONLY);
+	if (status == B_OK) {
+		BMessage settings;
+		status = settings.Unflatten(&file);
+		if (status == B_OK) {
+			bool enabled;
+			if (settings.FindBool("enabled", &enabled) == B_OK)
+				fEdgeSnapEnabled = enabled;
+
+			int32 modifier;
+			if (settings.FindInt32("modifier", &modifier) == B_OK
+				&& modifier >= B_EDGE_SNAP_MODIFIER_NONE
+				&& modifier <= B_EDGE_SNAP_MODIFIER_ALT) {
+				fEdgeSnapModifier = (edge_snap_modifier)modifier;
+			}
+
+			int32 sensitivity;
+			if (settings.FindInt32("sensitivity", &sensitivity) == B_OK
+				&& sensitivity >= B_EDGE_SNAP_SENSITIVITY_LOW
+				&& sensitivity <= B_EDGE_SNAP_SENSITIVITY_HIGH) {
+				fEdgeSnapSensitivity = (edge_snap_sensitivity)sensitivity;
 			}
 		}
 	}
@@ -417,6 +450,23 @@ DesktopSettingsPrivate::Save(uint32 mask)
 		}
 	}
 
+	if (mask & kEdgeSnapSettings) {
+		BPath path(basePath);
+		if (path.Append("edge_snap") == B_OK) {
+			BMessage settings('ases');
+			settings.AddBool("enabled", fEdgeSnapEnabled);
+			settings.AddInt32("modifier", (int32)fEdgeSnapModifier);
+			settings.AddInt32("sensitivity", (int32)fEdgeSnapSensitivity);
+
+			BFile file;
+			status = file.SetTo(path.Path(), B_CREATE_FILE | B_ERASE_FILE
+				| B_READ_WRITE);
+			if (status == B_OK) {
+				status = settings.Flatten(&file, NULL);
+			}
+		}
+	}
+
 	if (mask & kDraggerSettings) {
 		BPath path(basePath);
 		if (path.Append("dragger") == B_OK) {
@@ -596,6 +646,52 @@ bool
 DesktopSettingsPrivate::AcceptFirstClick() const
 {
 	return fAcceptFirstClick;
+}
+
+
+void
+DesktopSettingsPrivate::SetEdgeSnapEnabled(bool enabled)
+{
+	fEdgeSnapEnabled = enabled;
+	Save(kEdgeSnapSettings);
+}
+
+
+bool
+DesktopSettingsPrivate::EdgeSnapEnabled() const
+{
+	return fEdgeSnapEnabled;
+}
+
+
+void
+DesktopSettingsPrivate::SetEdgeSnapModifier(edge_snap_modifier modifier)
+{
+	fEdgeSnapModifier = modifier;
+	Save(kEdgeSnapSettings);
+}
+
+
+edge_snap_modifier
+DesktopSettingsPrivate::EdgeSnapModifier() const
+{
+	return fEdgeSnapModifier;
+}
+
+
+void
+DesktopSettingsPrivate::SetEdgeSnapSensitivity(
+	edge_snap_sensitivity sensitivity)
+{
+	fEdgeSnapSensitivity = sensitivity;
+	Save(kEdgeSnapSettings);
+}
+
+
+edge_snap_sensitivity
+DesktopSettingsPrivate::EdgeSnapSensitivity() const
+{
+	return fEdgeSnapSensitivity;
 }
 
 
@@ -900,6 +996,27 @@ DesktopSettings::AcceptFirstClick() const
 
 
 bool
+DesktopSettings::EdgeSnapEnabled() const
+{
+	return fSettings->EdgeSnapEnabled();
+}
+
+
+edge_snap_modifier
+DesktopSettings::EdgeSnapModifier() const
+{
+	return fSettings->EdgeSnapModifier();
+}
+
+
+edge_snap_sensitivity
+DesktopSettings::EdgeSnapSensitivity() const
+{
+	return fSettings->EdgeSnapSensitivity();
+}
+
+
+bool
 DesktopSettings::ShowAllDraggers() const
 {
 	return fSettings->ShowAllDraggers();
@@ -1053,6 +1170,28 @@ void
 LockedDesktopSettings::SetAcceptFirstClick(const bool acceptFirstClick)
 {
 	fSettings->SetAcceptFirstClick(acceptFirstClick);
+}
+
+
+void
+LockedDesktopSettings::SetEdgeSnapEnabled(bool enabled)
+{
+	fSettings->SetEdgeSnapEnabled(enabled);
+}
+
+
+void
+LockedDesktopSettings::SetEdgeSnapModifier(edge_snap_modifier modifier)
+{
+	fSettings->SetEdgeSnapModifier(modifier);
+}
+
+
+void
+LockedDesktopSettings::SetEdgeSnapSensitivity(
+	edge_snap_sensitivity sensitivity)
+{
+	fSettings->SetEdgeSnapSensitivity(sensitivity);
 }
 
 

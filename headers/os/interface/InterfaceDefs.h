@@ -215,6 +215,19 @@ enum mode_focus_follows_mouse {
 	B_INSTANT_WARP_FOCUS_FOLLOWS_MOUSE	= 2
 };
 
+enum edge_snap_modifier {
+	B_EDGE_SNAP_MODIFIER_NONE		= 0,
+	B_EDGE_SNAP_MODIFIER_SHIFT		= 1,
+	B_EDGE_SNAP_MODIFIER_CONTROL	= 2,
+	B_EDGE_SNAP_MODIFIER_ALT		= 3
+};
+
+enum edge_snap_sensitivity {
+	B_EDGE_SNAP_SENSITIVITY_LOW		= 0,
+	B_EDGE_SNAP_SENSITIVITY_MEDIUM	= 1,
+	B_EDGE_SNAP_SENSITIVITY_HIGH	= 2
+};
+
 
 // View orientation/alignment/style
 
@@ -520,6 +533,15 @@ status_t		get_mouse_bitmap(BBitmap** bitmap, BPoint* hotspot);
 
 void			set_accept_first_click(bool acceptFirstClick);
 bool			accept_first_click();
+
+void			set_edge_snap_enabled(bool enabled);
+bool			edge_snap_enabled();
+
+void			set_edge_snap_modifier(edge_snap_modifier modifier);
+edge_snap_modifier	get_edge_snap_modifier();
+
+void			set_edge_snap_sensitivity(edge_snap_sensitivity sensitivity);
+edge_snap_sensitivity	get_edge_snap_sensitivity();
 
 rgb_color		ui_color(color_which which);
 const char*		ui_color_name(color_which which);

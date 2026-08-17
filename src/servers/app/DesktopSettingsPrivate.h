@@ -62,6 +62,15 @@ public:
 			void				SetAcceptFirstClick(bool acceptFirstClick);
 			bool				AcceptFirstClick() const;
 
+			void				SetEdgeSnapEnabled(bool enabled);
+			bool				EdgeSnapEnabled() const;
+			void				SetEdgeSnapModifier(
+									edge_snap_modifier modifier);
+			edge_snap_modifier	EdgeSnapModifier() const;
+			void				SetEdgeSnapSensitivity(
+									edge_snap_sensitivity sensitivity);
+			edge_snap_sensitivity	EdgeSnapSensitivity() const;
+
 			void				SetShowAllDraggers(bool show);
 			bool				ShowAllDraggers() const;
 
@@ -115,6 +124,9 @@ private:
 			mode_mouse			fMouseMode;
 			mode_focus_follows_mouse	fFocusFollowsMouseMode;
 			bool				fAcceptFirstClick;
+			bool				fEdgeSnapEnabled;
+			edge_snap_modifier	fEdgeSnapModifier;
+			edge_snap_sensitivity	fEdgeSnapSensitivity;
 			bool				fShowAllDraggers;
 			int32				fWorkspacesColumns;
 			int32				fWorkspacesRows;
